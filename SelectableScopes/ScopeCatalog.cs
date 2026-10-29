@@ -233,7 +233,7 @@ internal static class ScopeCatalog
             builder.Append("Replaces the sight on your equipped ").Append(weapon).Append('.');
         }
 
-        builder.Append('\n').Append("Takes effect the next time that weapon is equipped.");
+        builder.Append('\n').Append("Updates the equipped weapon and its icon.");
         return builder.ToString();
     }
 

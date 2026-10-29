@@ -481,6 +481,7 @@ internal static class ScopeLoadoutCategory
     private static void Choose(InventorySlot slot, int key, string sightName)
     {
         ScopeChoices.Set(slot, sightName);
+        ScopeSight.ApplySelection(slot);
         Plugin.LogSource.LogInfo((slot == InventorySlot.GearSpecial ? "Special" : "Primary") + " sight set to " + sightName + ".");
         CM_ScrollWindow window = OpenBar != null ? OpenBar.m_popupScrollWindow : null;
         float scroll = window != null ? window.m_posOffset : 0f;

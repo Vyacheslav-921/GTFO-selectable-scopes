@@ -7,18 +7,17 @@ namespace SelectableScopes.Patches;
 [HarmonyPatch(typeof(PlayerBackpack), nameof(PlayerBackpack.SpawnAndEquipGearAsync))]
 internal static class GearSpawnPatch
 {
-    private static void Prefix(PlayerBackpack __instance, InventorySlot slot, GearIDRange gearIDRange)
+    private static void Prefix(PlayerBackpack __instance, InventorySlot slot, ref GearIDRange gearIDRange)
     {
         if (!Plugin.Ready || __instance == null || !__instance.IsLocal || gearIDRange == null)
         {
             return;
         }
 
-        if (!ScopeChoices.TryGetSightId(slot, out uint sightId))
+        GearIDRange updated = ScopeSight.WithSight(slot, gearIDRange);
+        if (updated != null)
         {
-            return;
+            gearIDRange = updated;
         }
-
-        gearIDRange.SetCompID(eGearComponent.SightPart, sightId, true);
     }
 }
