@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <GameFolder>c:\Users\User\AppData\Roaming\r2modmanPlus-local\GTFO\profiles\my-mod</GameFolder>
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+  </PropertyGroup>
+</Project>
