@@ -1,6 +1,7 @@
 using CellMenu;
 using Gear;
 using Player;
+using UnityEngine;
 
 namespace SelectableScopes;
 
@@ -8,11 +9,15 @@ internal static class ScopeSight
 {
     private static readonly Dictionary<string, uint> Originals = new Dictionary<string, uint>(StringComparer.Ordinal);
 
+    private static readonly Dictionary<InventorySlot, HeldClip> PendingClips = new Dictionary<InventorySlot, HeldClip>();
+
+    private static int MaintainedFrame = -1;
+
     private static bool Equipping;
 
     internal static GearIDRange WithSight(InventorySlot slot, GearIDRange source)
     {
-        if (!Plugin.Ready || source == null || !IsWeaponSlot(slot))
+        if (!Plugin.Ready || source == null || !IsWeaponSlot(slot) || !ScopeCatalog.AppliesTo(source))
         {
             return null;
         }
@@ -42,8 +47,53 @@ internal static class ScopeSight
         return copy;
     }
 
+    internal static GearIDRange IconRange(CM_InventorySlotItem item, GearIDRange source)
+    {
+        if (item != null
+            && !item.m_isWeaponPicker
+            && IsWeaponSlot(item.m_slot)
+            && IsLocal(item)
+            && ScopeChoices.TryGetSightId(item.m_slot, out _))
+        {
+            return WithSight(item.m_slot, source);
+        }
+
+        return WithAuthoredSight(source);
+    }
+
+    internal static GearIDRange WithAuthoredSight(GearIDRange source)
+    {
+        if (!Plugin.Ready || source == null || !ScopeCatalog.TryGetAuthoredSight(source, out bool hadSight, out uint authored))
+        {
+            return null;
+        }
+
+        uint wanted = hadSight ? authored : 0u;
+        if (source.GetCompID(eGearComponent.SightPart) == wanted)
+        {
+            return null;
+        }
+
+        GearIDRange copy = Copy(source);
+        if (copy == null)
+        {
+            return null;
+        }
+
+        copy.SetCompID(eGearComponent.SightPart, wanted, false);
+        return copy;
+    }
+
     internal static void ApplySelection(InventorySlot slot)
     {
+        BackpackItem equipped = PlayerBackpackManager.GetLocalItem(slot);
+        if (equipped != null && equipped.GearIDRange != null && !ScopeCatalog.AppliesTo(equipped.GearIDRange))
+        {
+            Plugin.LogSource.LogInfo("Left the revolver on its default sight.");
+            return;
+        }
+
+        RememberClip(slot);
         RefreshIcons(slot);
         if (Equipping)
         {
@@ -72,6 +122,8 @@ internal static class ScopeSight
         GearIDRange updated = WithSight(slot, source);
         if (updated == null)
         {
+            RevertPack(slot);
+            PendingClips.Remove(slot);
             return;
         }
 
@@ -84,12 +136,444 @@ internal static class ScopeSight
                 backpack.TryClearSlot(slot);
             }
 
+            Stage(slot);
             PlayerBackpackManager.EquipLocalGearAsync(slot, updated, null);
             Plugin.LogSource.LogInfo((slot == InventorySlot.GearSpecial ? "Special" : "Primary") + " sight applied to the equipped weapon.");
         }
         finally
         {
             Equipping = false;
+        }
+    }
+
+    internal static void MaintainClips()
+    {
+        if (PendingClips.Count == 0)
+        {
+            return;
+        }
+
+        int frame = Time.frameCount;
+        if (frame == MaintainedFrame)
+        {
+            return;
+        }
+
+        MaintainedFrame = frame;
+        List<InventorySlot> slots = new List<InventorySlot>(PendingClips.Keys);
+        for (int i = 0; i < slots.Count; i++)
+        {
+            Enforce(slots[i], true);
+        }
+    }
+
+    internal static void RestoreClip(InventorySlot slot)
+    {
+        Enforce(slot, false);
+    }
+
+    internal static void StageClip(InventorySlot slot)
+    {
+        Stage(slot);
+    }
+
+    internal static void StageStored(PlayerAmmoStorage storage, InventorySlot slot)
+    {
+        if (storage == null || storage.m_playerBackpack == null || !storage.m_playerBackpack.IsLocal)
+        {
+            return;
+        }
+
+        Stage(slot);
+    }
+
+    internal static void StageWeapon(ItemEquippable weapon)
+    {
+        if (!IsLocalOwned(weapon) || !TryPendingSlot(weapon, out InventorySlot slot))
+        {
+            return;
+        }
+
+        Stage(slot);
+    }
+
+    internal static void RestoreWeapon(ItemEquippable weapon)
+    {
+        if (!IsLocalOwned(weapon) || !TryPendingSlot(weapon, out InventorySlot slot))
+        {
+            return;
+        }
+
+        if (!PendingClips.TryGetValue(slot, out HeldClip held))
+        {
+            return;
+        }
+
+        WriteClip(slot, weapon, TargetCount(held, weapon));
+    }
+
+    internal static void AfterWeaponUpdate(ItemEquippable weapon)
+    {
+        if (!IsLocalOwned(weapon) || !TryPendingSlot(weapon, out InventorySlot slot))
+        {
+            return;
+        }
+
+        if (!PendingClips.TryGetValue(slot, out HeldClip held))
+        {
+            return;
+        }
+
+        int target = TargetCount(held, weapon);
+        if (ReadClip(weapon) == target)
+        {
+            return;
+        }
+
+        held.Stable = 0;
+        PendingClips[slot] = held;
+        WriteClip(slot, weapon, target);
+    }
+
+    private static void Enforce(InventorySlot slot, bool count)
+    {
+        if (!PendingClips.TryGetValue(slot, out HeldClip held))
+        {
+            return;
+        }
+
+        BackpackItem current = PlayerBackpackManager.GetLocalItem(slot);
+        ItemEquippable weapon = current != null && current.Instance != null ? current.Instance.TryCast<ItemEquippable>() : null;
+        if (weapon == null)
+        {
+            Stage(slot);
+            if (!count)
+            {
+                return;
+            }
+
+            held.Missing++;
+            if (held.Missing > 600)
+            {
+                PendingClips.Remove(slot);
+                return;
+            }
+
+            PendingClips[slot] = held;
+            return;
+        }
+
+        if (held.Receiver != 0 && current.GearIDRange != null)
+        {
+            uint receiver = 0;
+            try
+            {
+                receiver = current.GearIDRange.GetCompID(eGearComponent.ReceiverPart);
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogDebug("Clip weapon: " + ex.Message);
+            }
+
+            if (receiver != 0 && receiver != held.Receiver)
+            {
+                RevertPack(slot);
+                PendingClips.Remove(slot);
+                return;
+            }
+        }
+
+        int target = TargetCount(held, weapon);
+        if (ReadClip(weapon) == target)
+        {
+            if (!count)
+            {
+                return;
+            }
+
+            held.Stable++;
+            if (held.Stable >= 3)
+            {
+                PendingClips.Remove(slot);
+                Plugin.LogSource.LogInfo("Magazine kept at " + target + " after the sight change.");
+                return;
+            }
+
+            PendingClips[slot] = held;
+            return;
+        }
+
+        if (!count)
+        {
+            WriteClip(slot, weapon, target);
+            return;
+        }
+
+        held.Stable = 0;
+        held.Corrections++;
+        if (held.Corrections > 90)
+        {
+            PendingClips.Remove(slot);
+            Plugin.LogSource.LogWarning("Magazine stayed at " + ReadClip(weapon) + " after a sight change. Left it there so firing still spends rounds.");
+            return;
+        }
+
+        PendingClips[slot] = held;
+        WriteClip(slot, weapon, target);
+    }
+
+    private static void RememberClip(InventorySlot slot)
+    {
+        BackpackItem item = PlayerBackpackManager.GetLocalItem(slot);
+        ItemEquippable weapon = item != null && item.Instance != null ? item.Instance.TryCast<ItemEquippable>() : null;
+        if (weapon == null)
+        {
+            return;
+        }
+
+        int clip;
+        int max;
+        try
+        {
+            clip = weapon.GetCurrentClip();
+            max = weapon.GetMaxClip();
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip snapshot: " + ex.Message);
+            return;
+        }
+
+        if (clip <= 0 && PendingClips.ContainsKey(slot))
+        {
+            return;
+        }
+
+        uint receiver = 0;
+        try
+        {
+            if (item.GearIDRange != null)
+            {
+                receiver = item.GearIDRange.GetCompID(eGearComponent.ReceiverPart);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip weapon: " + ex.Message);
+        }
+
+        float original = 0f;
+        bool hasPack = false;
+        PlayerBackpack backpack = PlayerBackpackManager.LocalBackpack;
+        if (backpack != null && backpack.AmmoStorage != null)
+        {
+            try
+            {
+                InventorySlotAmmo ammo = backpack.AmmoStorage.GetInventorySlotAmmo(slot);
+                if (ammo != null)
+                {
+                    original = ammo.AmmoInPack;
+                    hasPack = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogDebug("Clip store: " + ex.Message);
+            }
+        }
+
+        PendingClips[slot] = new HeldClip
+        {
+            Clip = Math.Max(0, clip),
+            Max = Math.Max(0, max),
+            Receiver = receiver,
+            PackFloor = Mathf.Floor(original + 0.0001f),
+            PackOriginal = original,
+            HasPack = hasPack
+        };
+
+        Stage(slot);
+    }
+
+    private static void Stage(InventorySlot slot)
+    {
+        if (!PendingClips.TryGetValue(slot, out HeldClip held) || !held.HasPack)
+        {
+            return;
+        }
+
+        PlayerBackpack backpack = PlayerBackpackManager.LocalBackpack;
+        if (backpack == null || backpack.AmmoStorage == null)
+        {
+            return;
+        }
+
+        int max = held.Max > 0 ? held.Max : held.Clip;
+        try
+        {
+            InventorySlotAmmo ammo = backpack.AmmoStorage.GetInventorySlotAmmo(slot);
+            if (ammo == null)
+            {
+                return;
+            }
+
+            ammo.AmmoInPack = held.PackFloor + StoredRel(held.Clip, max);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip stage: " + ex.Message);
+        }
+    }
+
+    private static void RevertPack(InventorySlot slot)
+    {
+        if (!PendingClips.TryGetValue(slot, out HeldClip held) || !held.HasPack)
+        {
+            return;
+        }
+
+        PlayerBackpack backpack = PlayerBackpackManager.LocalBackpack;
+        if (backpack == null || backpack.AmmoStorage == null)
+        {
+            return;
+        }
+
+        try
+        {
+            InventorySlotAmmo ammo = backpack.AmmoStorage.GetInventorySlotAmmo(slot);
+            if (ammo != null)
+            {
+                ammo.AmmoInPack = held.PackOriginal;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip revert: " + ex.Message);
+        }
+    }
+
+    private static void WriteClip(InventorySlot slot, ItemEquippable weapon, int target)
+    {
+        Stage(slot);
+        try
+        {
+            weapon.SetCurrentClip(target);
+            BulletWeapon gun = weapon.TryCast<BulletWeapon>();
+            if (gun != null)
+            {
+                gun.m_hasGottenClip = true;
+                gun.UpdateMagazineCartridgesVisible(true);
+            }
+
+            PlayerBackpack backpack = PlayerBackpackManager.LocalBackpack;
+            if (backpack != null && backpack.AmmoStorage != null)
+            {
+                backpack.AmmoStorage.UpdateSlotAmmoUI(slot);
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip restore: " + ex.Message);
+        }
+
+        Stage(slot);
+    }
+
+    private static int TargetCount(HeldClip held, ItemEquippable weapon)
+    {
+        int max = held.Max;
+        try
+        {
+            int live = weapon.GetMaxClip();
+            if (live > 0)
+            {
+                max = live;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip max: " + ex.Message);
+        }
+
+        if (max > 0 && held.Clip > max)
+        {
+            return max;
+        }
+
+        return held.Clip;
+    }
+
+    private static int ReadClip(ItemEquippable weapon)
+    {
+        try
+        {
+            return weapon.GetCurrentClip();
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip read: " + ex.Message);
+            return -1;
+        }
+    }
+
+    private static float StoredRel(int clip, int max)
+    {
+        if (clip <= 0 || max <= 0)
+        {
+            return 0f;
+        }
+
+        float rel = clip >= max ? (max - 0.45f) / max : clip / (float)max;
+        if (rel >= 1f)
+        {
+            rel = 0.999f;
+        }
+
+        return rel < 0f ? 0f : rel;
+    }
+
+    private static bool TryPendingSlot(ItemEquippable weapon, out InventorySlot slot)
+    {
+        slot = default;
+        if (weapon == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (weapon.ItemDataBlock == null)
+            {
+                return false;
+            }
+
+            slot = weapon.ItemDataBlock.inventorySlot;
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip slot: " + ex.Message);
+            return false;
+        }
+
+        return PendingClips.ContainsKey(slot);
+    }
+
+    private static bool IsLocalOwned(ItemEquippable weapon)
+    {
+        if (weapon == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            PlayerAgent agent = weapon.Owner;
+            return agent == null || agent.IsLocallyOwned;
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Clip owner: " + ex.Message);
+            return false;
         }
     }
 
@@ -197,5 +681,26 @@ internal static class ScopeSight
         }
 
         return builder.ToString();
+    }
+
+    private struct HeldClip
+    {
+        public int Clip;
+
+        public int Max;
+
+        public uint Receiver;
+
+        public float PackFloor;
+
+        public float PackOriginal;
+
+        public bool HasPack;
+
+        public int Stable;
+
+        public int Missing;
+
+        public int Corrections;
     }
 }

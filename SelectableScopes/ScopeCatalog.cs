@@ -23,6 +23,35 @@ internal static class ScopeCatalog
 
     private static readonly Dictionary<string, string> WeaponTitles = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    private static readonly Dictionary<string, AuthoredSight> AuthoredSights = new Dictionary<string, AuthoredSight>(StringComparer.Ordinal);
+
+    private static readonly Dictionary<string, AlignmentDefault> AlignmentDefaults = new Dictionary<string, AlignmentDefault>(StringComparer.Ordinal);
+
+    // Every sight on these weapons starts here until that sight is saved. Vertical stays 0 when it is omitted.
+    private static readonly Dictionary<string, AlignmentDefault> AlignmentPresets = new Dictionary<string, AlignmentDefault>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "HighCalPistol", new AlignmentDefault { Vertical = -0.02f, Forward = -0.05f } }, // Shelling Arid 5
+        { "PistolSemi", new AlignmentDefault { Vertical = -0.02f, Forward = -0.07f } }, // Shelling S49
+        { "PistolBurst", new AlignmentDefault { Vertical = -0.02f, Forward = -0.072f } }, // Shelling Nano
+        { "Autopistol staggering", new AlignmentDefault { Vertical = 0f, Forward = -0.045f } }, // Raptus Steigro, HEL autopistol
+        { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
+        { "BullpupAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.05f } }, // Accrat Golok DA
+        { "ShotgunAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.01f } }, // Buckland AF6
+        { "SMGAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.111f } }, // Van Auken LTC5
+        { "PDWAuto", new AlignmentDefault { Vertical = -0.02f, Forward = -0.12f } }, // Accrat STB
+        { "ShotgunRanged", new AlignmentDefault { Vertical = 0.02f, Forward = 0.115f } }, // Buckland XDist2
+        { "SMGHeavyAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.111f } }, // Accrat ND6
+        { "SMGBurst", new AlignmentDefault { Vertical = 0f, Forward = -0.07f } }, // Van Auken CAB F4
+        { "HELGun", new AlignmentDefault { Vertical = 0f, Forward = -0.1f } }, // Omneco EXP1
+        { "DMRSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // TR22 Hanaway
+        { "DMRBurst", new AlignmentDefault { Vertical = 0f, Forward = -0.05f } }, // Hanaway PSB
+        { "HELRifleSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.1f } }, // Omneco LRG
+        { "MachinegunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Techman Veruta XII
+        { "ShotgunShort", new AlignmentDefault { Vertical = 0.02f, Forward = 0f } } // Buckland SBS III
+    };
+
+    private static readonly HashSet<string> ExcludedSignatures = new HashSet<string>(StringComparer.Ordinal);
+
     private static eGearComponent[] Components;
 
     internal static void BuildAndApply()
@@ -52,10 +81,17 @@ internal static class ScopeCatalog
 
         Sights = new Dictionary<string, uint>(StringComparer.Ordinal);
         List<string> names = new List<string> { GearJsonEditor.DefaultSight };
+        int skippedFrontIrons = 0;
         foreach (GearSightPartDataBlock block in sights)
         {
             if (block == null)
             {
+                continue;
+            }
+
+            if (IsFrontIronSight(block.name))
+            {
+                skippedFrontIrons++;
                 continue;
             }
 
@@ -81,14 +117,27 @@ internal static class ScopeCatalog
         SightNames = names.ToArray();
         AcceptableValueList<string> acceptable = new AcceptableValueList<string>(SightNames);
         ScopeChoices.Bind(acceptable);
-        ScopeAlignment.Bind(SightNames);
         Weapons = new Dictionary<uint, ConfigEntry<string>>();
+        ExcludedSignatures.Clear();
         HashSet<string> usedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "General", "Lobby", "Alignment" };
         Dictionary<string, string> existing = ReadExistingSights();
         int configured = 0;
+        List<string> revolvers = new List<string>();
         foreach (PlayerOfflineGearDataBlock block in gear)
         {
-            if (block == null || string.IsNullOrEmpty(block.GearJSON) || !ShouldConfigure(block.GearJSON) || Weapons.ContainsKey(block.persistentID))
+            if (block == null || string.IsNullOrEmpty(block.GearJSON) || Weapons.ContainsKey(block.persistentID))
+            {
+                continue;
+            }
+
+            if (IsRevolver(block.name))
+            {
+                RememberRevolver(block);
+                revolvers.Add(string.IsNullOrWhiteSpace(block.name) ? block.persistentID.ToString(CultureInfo.InvariantCulture) : block.name);
+                continue;
+            }
+
+            if (!ShouldConfigure(block.GearJSON))
             {
                 continue;
             }
@@ -114,8 +163,19 @@ internal static class ScopeCatalog
             configured++;
         }
 
+        ScopeAlignment.Bind(SightNames);
+        DropRevolverSettings(revolvers);
         Plugin.Instance.Config.Save();
         Plugin.LogSource.LogInfo("Selectable Scopes catalog: " + Sights.Count + " sights, " + configured + " weapons.");
+        if (revolvers.Count > 0)
+        {
+            revolvers.Sort(StringComparer.OrdinalIgnoreCase);
+            Plugin.LogSource.LogInfo("Left " + string.Join(", ", revolvers) + " on the default sight.");
+        }
+        if (skippedFrontIrons > 0)
+        {
+            Plugin.LogSource.LogInfo("Left out " + skippedFrontIrons + " front iron sights. The rear sight is the one that aims.");
+        }
         return true;
     }
 
@@ -167,6 +227,50 @@ internal static class ScopeCatalog
         return "Weapon";
     }
 
+    internal static bool TryGetAuthoredSight(GearIDRange range, out bool hadSight, out uint sightId)
+    {
+        hadSight = false;
+        sightId = 0;
+        if (range == null)
+        {
+            return false;
+        }
+
+        string signature;
+        try
+        {
+            signature = Signature(range);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon signature: " + ex.Message);
+            return false;
+        }
+
+        if (signature == null || !AuthoredSights.TryGetValue(signature, out AuthoredSight authored))
+        {
+            return false;
+        }
+
+        hadSight = authored.HadSight;
+        sightId = authored.SightId;
+        return true;
+    }
+
+    internal static bool TryAlignmentDefault(string weaponKey, out float vertical, out float forward)
+    {
+        vertical = 0f;
+        forward = 0f;
+        if (weaponKey == null || !AlignmentDefaults.TryGetValue(weaponKey, out AlignmentDefault preset))
+        {
+            return false;
+        }
+
+        vertical = preset.Vertical;
+        forward = preset.Forward;
+        return true;
+    }
+
     private static void IndexWeapon(PlayerOfflineGearDataBlock block, string display)
     {
         string weaponKey = block.persistentID.ToString(CultureInfo.InvariantCulture);
@@ -175,21 +279,54 @@ internal static class ScopeCatalog
             WeaponTitles.Add(weaponKey, string.IsNullOrWhiteSpace(display) ? block.name : display);
         }
 
-        string resolved = weaponKey;
         string signature = GearJsonEditor.ComponentSignature(block.GearJSON);
         if (signature != null)
         {
-            if (WeaponKeys.TryGetValue(signature, out string existing))
-            {
-                resolved = existing;
-            }
-            else
+            if (!WeaponKeys.ContainsKey(signature))
             {
                 WeaponKeys.Add(signature, weaponKey);
             }
+
+            if (!AuthoredSights.ContainsKey(signature))
+            {
+                bool hadSight = GearJsonEditor.TryGetComponentValue(block.GearJSON, GearJsonEditor.SightComponentId, out long sightValue)
+                    && sightValue >= 0
+                    && sightValue <= uint.MaxValue;
+                AuthoredSights.Add(signature, new AuthoredSight
+                {
+                    HadSight = hadSight,
+                    SightId = hadSight ? (uint)sightValue : 0u
+                });
+            }
         }
 
-        ScopeAlignment.NoteWeapon(block.name, resolved);
+        RememberAlignmentDefault(weaponKey, block.name, display);
+    }
+
+    private static void RememberAlignmentDefault(string weaponKey, string datablockName, string display)
+    {
+        if (AlignmentDefaults.ContainsKey(weaponKey) || !TryAlignmentPreset(datablockName, out AlignmentDefault preset))
+        {
+            return;
+        }
+
+        AlignmentDefaults.Add(weaponKey, preset);
+        string title = string.IsNullOrWhiteSpace(display) ? datablockName : display;
+        Plugin.LogSource.LogInfo(
+            "Default alignment for " + title
+            + ": scope vertical " + preset.Vertical.ToString("+0.0000;-0.0000", CultureInfo.InvariantCulture)
+            + ", scope forward " + preset.Forward.ToString("+0.0000;-0.0000", CultureInfo.InvariantCulture) + ".");
+    }
+
+    private static bool TryAlignmentPreset(string datablockName, out AlignmentDefault preset)
+    {
+        if (datablockName != null && AlignmentPresets.TryGetValue(datablockName, out preset))
+        {
+            return true;
+        }
+
+        preset = default;
+        return false;
     }
 
     private static string Signature(GearIDRange range)
@@ -235,6 +372,86 @@ internal static class ScopeCatalog
 
         string text = builder.ToString().Trim('_');
         return text.Length == 0 ? "weapon" : text;
+    }
+
+    private static bool IsFrontIronSight(string name)
+    {
+        const string prefix = "IronSights_";
+        if (string.IsNullOrEmpty(name) || name.Length <= prefix.Length || !name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string body = name.Substring(prefix.Length);
+        const string copy = "_Copy";
+        while (body.EndsWith(copy, StringComparison.OrdinalIgnoreCase))
+        {
+            body = body.Substring(0, body.Length - copy.Length);
+        }
+
+        return body.EndsWith("_F", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool AppliesTo(GearIDRange range)
+    {
+        if (range == null || ExcludedSignatures.Count == 0)
+        {
+            return range != null;
+        }
+
+        string signature;
+        try
+        {
+            signature = Signature(range);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon signature: " + ex.Message);
+            return true;
+        }
+
+        return signature == null || !ExcludedSignatures.Contains(signature);
+    }
+
+    private static void RememberRevolver(PlayerOfflineGearDataBlock block)
+    {
+        string signature = GearJsonEditor.ComponentSignature(block.GearJSON);
+        if (signature == null)
+        {
+            Plugin.LogSource.LogWarning("Could not identify " + block.name + ". Sight selection was not blocked for it.");
+            return;
+        }
+
+        ExcludedSignatures.Add(signature);
+    }
+
+    private static void DropRevolverSettings(List<string> revolvers)
+    {
+        if (revolvers.Count == 0)
+        {
+            return;
+        }
+
+        bool save = Plugin.Instance.Config.SaveOnConfigSet;
+        Plugin.Instance.Config.SaveOnConfigSet = false;
+        try
+        {
+            for (int i = 0; i < revolvers.Count; i++)
+            {
+                ConfigDefinition definition = new ConfigDefinition(revolvers[i], "Sight");
+                Plugin.Instance.Config.Bind(definition, GearJsonEditor.DefaultSight);
+                Plugin.Instance.Config.Remove(definition);
+            }
+        }
+        finally
+        {
+            Plugin.Instance.Config.SaveOnConfigSet = save;
+        }
+    }
+
+    private static bool IsRevolver(string name)
+    {
+        return !string.IsNullOrEmpty(name) && name.IndexOf("Revolver", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static bool ShouldConfigure(string gearJson)
@@ -490,5 +707,19 @@ internal static class ScopeCatalog
         }
 
         return section;
+    }
+
+    private struct AuthoredSight
+    {
+        public bool HadSight;
+
+        public uint SightId;
+    }
+
+    private struct AlignmentDefault
+    {
+        public float Vertical;
+
+        public float Forward;
     }
 }

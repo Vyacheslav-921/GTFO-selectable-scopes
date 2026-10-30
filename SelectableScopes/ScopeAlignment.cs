@@ -12,25 +12,21 @@ namespace SelectableScopes;
 
 internal static class ScopeAlignment
 {
-    internal const float Step = 0.001f;
+    internal const float Step = 0.02f;
+
+    private const float ForwardStep = 0.001f;
 
     private const float Max = 0.25f;
 
     private const string Section = "Alignment";
-
-    // Datablock name to scope height used until that weapon and sight are saved.
-    private static readonly Dictionary<string, float> DefaultScopeByName = new Dictionary<string, float>(StringComparer.Ordinal)
-    {
-        { "RevolverSemi", -0.0510f }
-    };
-
-    private static readonly Dictionary<string, float> DefaultScopeByWeapon = new Dictionary<string, float>(StringComparer.Ordinal);
 
     private const string ScopeSuffix = " Scope Vertical";
 
     private const string ForwardSuffix = " Scope Forward";
 
     private const string RetiredHandsSuffix = " Aim Hands Vertical";
+
+    private const string CarrierName = "ScopeAlignCarrier";
 
     // Stored positive is up. These part roots point the other way along local Y.
     private const float VisualSign = -1f;
@@ -49,6 +45,11 @@ internal static class ScopeAlignment
     private static readonly Dictionary<uint, string> NamesById = new Dictionary<uint, string>();
 
     private static readonly Dictionary<long, PlaceState> Places = new Dictionary<long, PlaceState>();
+
+    // Front irons are a bare mesh. The rear half owns Sight_Align, and the two were never parented together.
+    private static readonly Dictionary<long, Transform> FrontCarriers = new Dictionary<long, Transform>();
+
+    private static readonly HashSet<string> LinkedIrons = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Dictionary<IntPtr, bool> LocalCache = new Dictionary<IntPtr, bool>();
 
@@ -91,7 +92,8 @@ internal static class ScopeAlignment
 
         ReadCurrent(key, out float scope, out float forward);
         float current = kind == 0 ? scope : forward;
-        float value = Mathf.Clamp(Mathf.Round((current + (direction * Step)) * 1000f) / 1000f, -Max, Max);
+        float step = kind == 0 ? Step : ForwardStep;
+        float value = Mathf.Clamp(Mathf.Round((current + (direction * step)) * 1000f) / 1000f, -Max, Max);
         if (Mathf.Abs(value - current) < 0.0000001f)
         {
             return false;
@@ -134,15 +136,15 @@ internal static class ScopeAlignment
             return false;
         }
 
-        float scopeDefault = DefaultScope(key.Weapon);
+        BuiltIn(key.Weapon, out float scopeDefault, out float forwardDefault);
         bool pending = Session.Remove(key);
         ReadSaved(key, out float scope, out float forward);
-        if (!pending && Mathf.Abs(scope - scopeDefault) < 0.00001f && Mathf.Abs(forward) < 0.00001f)
+        if (!pending && Mathf.Abs(scope - scopeDefault) < 0.00001f && Mathf.Abs(forward - forwardDefault) < 0.00001f)
         {
             return false;
         }
 
-        Write(key, scopeDefault, 0f);
+        Write(key, scopeDefault, forwardDefault);
         Plugin.Instance.Config.Save();
         Plugin.LogSource.LogInfo("Reset alignment for " + SlotName(slot) + " " + weaponTitle + " / " + Label(sightName) + ".");
         Reapply();
@@ -187,14 +189,14 @@ internal static class ScopeAlignment
 
         if (!TryValues(slot, sightName, out float scope, out float forward, out string weaponTitle, out bool pending))
         {
-            return "Equip a " + slotName.ToLowerInvariant() + " weapon, then use the rows at the top. Each click moves " + Step.ToString("0.000", CultureInfo.InvariantCulture) + " m.";
+            return "Equip a " + slotName.ToLowerInvariant() + " weapon, then use the rows at the top. Scope up and down move " + Step.ToString("0.00", CultureInfo.InvariantCulture) + " m per click.";
         }
 
         StringBuilder builder = new StringBuilder();
         builder.Append("Scope height ").Append(Signed(scope)).Append(" m");
         builder.Append('\n').Append("Scope forward ").Append(Signed(forward)).Append(" m");
         builder.Append('\n').Append(slotName).Append(" weapon: ").Append(weaponTitle);
-        builder.Append('\n').Append(pending ? "Not saved yet." : "Saved for this weapon and sight.");
+        builder.Append('\n').Append(Status(slot, sightName, pending));
         builder.Append('\n').Append(selected
             ? "Top rows nudge this sight. Save stores it for this weapon. Reset restores the default alignment."
             : "Top rows change the selected sight.");
@@ -211,22 +213,24 @@ internal static class ScopeAlignment
         Transform sight = holder.SightPart.transform;
         if (!TryPlacement(holder, out float scope, out float forward, out InventorySlot slot, out string weaponKey, out string sightName))
         {
-            if (IsTracked(sight))
+            Transform reset = TrackedIronTarget(sight);
+            if (IsTracked(reset))
             {
-                ApplyLocal(sight, 0f, 0f);
+                ApplyLocal(reset, 0f, 0f);
             }
 
             return;
         }
 
+        Transform target = IronTarget(holder, sight, sightName);
         float vertical = VisualSign * scope;
         float depth = ForwardSign * forward;
-        if (Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(sight))
+        if (Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(target))
         {
             return;
         }
 
-        ApplyLocal(sight, vertical, depth);
+        ApplyLocal(target, vertical, depth);
         LogIfChanged(slot, weaponKey, sightName, scope, forward);
     }
 
@@ -240,8 +244,251 @@ internal static class ScopeAlignment
         LocalCache.Remove(holder.Pointer);
         if (holder.SightPart != null)
         {
-            ForgetTransform(holder.SightPart.transform);
+            Transform sight = holder.SightPart.transform;
+            long id = sight.GetInstanceID();
+            ForgetTransform(sight);
+            if (FrontCarriers.TryGetValue(id, out Transform carrier))
+            {
+                ForgetTransform(carrier);
+                FrontCarriers.Remove(id);
+            }
         }
+    }
+
+    private static Transform TrackedIronTarget(Transform sight)
+    {
+        if (sight != null && FrontCarriers.TryGetValue(sight.GetInstanceID(), out Transform carrier) && carrier != null)
+        {
+            return carrier;
+        }
+
+        return sight;
+    }
+
+    private static Transform IronTarget(GearPartHolder holder, Transform sight, string sightName)
+    {
+        if (!TryIronMate(sightName, out string mateName, out bool front))
+        {
+            return sight;
+        }
+
+        if (!front)
+        {
+            AttachMate(sight, sight, mateName);
+            return sight;
+        }
+
+        return FrontCarrier(holder, sight, sightName, mateName);
+    }
+
+    private static Transform FrontCarrier(GearPartHolder holder, Transform sight, string sightName, string mateName)
+    {
+        long id = sight.GetInstanceID();
+        if (!FrontCarriers.TryGetValue(id, out Transform carrier) || carrier == null)
+        {
+            carrier = sight.parent != null && sight.parent.name == CarrierName ? sight.parent : null;
+        }
+
+        if (carrier == null)
+        {
+            if (Places.TryGetValue(id, out PlaceState state))
+            {
+                Vector3 local = sight.localPosition;
+                local.y -= state.Vertical;
+                local.z -= state.Depth;
+                sight.localPosition = local;
+                Places.Remove(id);
+            }
+
+            GameObject carrierObject = new GameObject(CarrierName);
+            carrier = carrierObject.transform;
+            Transform parent = sight.parent;
+            int sibling = sight.GetSiblingIndex();
+            carrier.SetParent(parent, false);
+            carrier.localPosition = sight.localPosition;
+            carrier.localRotation = sight.localRotation;
+            carrier.localScale = sight.localScale;
+            if (parent != null)
+            {
+                carrier.SetSiblingIndex(sibling);
+            }
+
+            sight.SetParent(carrier, true);
+            if (LinkedIrons.Add(sightName))
+            {
+                Plugin.LogSource.LogInfo("Front iron " + sightName + " is moved with " + mateName + ". The front mesh was not parented to the rear sight.");
+            }
+        }
+        else if (sight.parent != carrier)
+        {
+            sight.SetParent(carrier, true);
+        }
+
+        FrontCarriers[id] = carrier;
+        AttachMate(carrier, sight, mateName);
+        EnsureSightAlign(holder, carrier, sight);
+        return carrier;
+    }
+
+    private static void AttachMate(Transform keepOn, Transform sight, string mateName)
+    {
+        if (keepOn == null || sight == null || string.IsNullOrEmpty(mateName))
+        {
+            return;
+        }
+
+        Transform mate = FindMate(sight, mateName);
+        if (mate == null || mate == keepOn || mate == sight || sight.IsChildOf(mate) || mate.parent == keepOn)
+        {
+            return;
+        }
+
+        mate.SetParent(keepOn, true);
+    }
+
+    private static Transform FindMate(Transform sight, string mateName)
+    {
+        Transform parent = sight.parent;
+        Transform found = FindDirect(parent, sight, mateName);
+        if (found != null)
+        {
+            return found;
+        }
+
+        if (parent != null && parent.name == CarrierName)
+        {
+            return FindDirect(parent.parent, parent, mateName);
+        }
+
+        return null;
+    }
+
+    private static Transform FindDirect(Transform parent, Transform skip, string partName)
+    {
+        if (parent == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            Transform child = parent.GetChild(i);
+            if (child != skip && NamesMatch(child.name, partName))
+            {
+                return child;
+            }
+        }
+
+        return null;
+    }
+
+    private static void EnsureSightAlign(GearPartHolder holder, Transform carrier, Transform sight)
+    {
+        Transform align = FindNamed(carrier, "Sight_Align");
+        if (align == null)
+        {
+            GameObject alignObject = new GameObject("Sight_Align");
+            align = alignObject.transform;
+            align.SetParent(carrier, false);
+            Renderer renderer = sight.GetComponent<Renderer>();
+            if (renderer != null && renderer.enabled)
+            {
+                align.position = renderer.bounds.center;
+            }
+        }
+
+        if (holder.m_aSightLook == null || !holder.m_aSightLook.IsChildOf(carrier))
+        {
+            holder.m_aSightLook = align;
+        }
+
+        ItemEquippable item = holder.GetComponentInParent<ItemEquippable>();
+        if (item != null && (item.SightLookAlign == null || !item.SightLookAlign.IsChildOf(carrier)))
+        {
+            item.SightLookAlign = align;
+        }
+    }
+
+    private static Transform FindNamed(Transform root, string partName)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+
+        if (NamesMatch(root.name, partName))
+        {
+            return root;
+        }
+
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform found = FindNamed(root.GetChild(i), partName);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool NamesMatch(string transformName, string partName)
+    {
+        if (string.Equals(transformName, partName, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrEmpty(transformName) || string.IsNullOrEmpty(partName) || transformName.Length <= partName.Length)
+        {
+            return false;
+        }
+
+        if (!transformName.StartsWith(partName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        char next = transformName[partName.Length];
+        return next == '(' || next == ' ';
+    }
+
+    private static bool TryIronMate(string sightName, out string mateName, out bool front)
+    {
+        mateName = null;
+        front = false;
+        const string prefix = "IronSights_";
+        if (string.IsNullOrEmpty(sightName) || sightName.Length <= prefix.Length || !sightName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string body = sightName.Substring(prefix.Length);
+        if (body.EndsWith("_Copy_Copy", StringComparison.OrdinalIgnoreCase))
+        {
+            body = body.Substring(0, body.Length - "_Copy_Copy".Length);
+        }
+        else if (body.EndsWith("_Copy", StringComparison.OrdinalIgnoreCase))
+        {
+            body = body.Substring(0, body.Length - "_Copy".Length);
+        }
+
+        bool rear = body.EndsWith("_B", StringComparison.OrdinalIgnoreCase);
+        front = body.EndsWith("_F", StringComparison.OrdinalIgnoreCase);
+        if (!front && !rear)
+        {
+            return false;
+        }
+
+        string id = body.Substring(0, body.Length - 2);
+        if (id.Length == 0)
+        {
+            return false;
+        }
+
+        mateName = sightName.Substring(0, prefix.Length) + id + (front ? "_B" : "_F");
+        return true;
     }
 
     private static void Reapply()
@@ -384,6 +631,11 @@ internal static class ScopeAlignment
 
         if (range != null)
         {
+            if (!ScopeCatalog.AppliesTo(range))
+            {
+                return false;
+            }
+
             weaponKey = ScopeCatalog.WeaponKeyFor(range);
             if (weaponKey != null && TrySlot(weaponKey, sightName, out slot))
             {
@@ -445,6 +697,11 @@ internal static class ScopeAlignment
             return false;
         }
 
+        if (!ScopeCatalog.AppliesTo(range))
+        {
+            return false;
+        }
+
         weaponKey = ScopeCatalog.WeaponKeyFor(range);
         if (weaponKey == null)
         {
@@ -500,15 +757,47 @@ internal static class ScopeAlignment
 
     private static void ReadSaved((InventorySlot Slot, string Weapon, string Sight) key, out float scope, out float forward)
     {
-        scope = DefaultScope(key.Weapon);
-        forward = 0f;
         if (!Saved.TryGetValue(key, out Pair pair))
         {
+            BuiltIn(key.Weapon, out scope, out forward);
             return;
         }
 
         scope = Mathf.Clamp(pair.Scope.Value, -Max, Max);
         forward = Mathf.Clamp(pair.Forward.Value, -Max, Max);
+    }
+
+    private static void BuiltIn(string weaponKey, out float scope, out float forward)
+    {
+        if (weaponKey == null || !ScopeCatalog.TryAlignmentDefault(weaponKey, out scope, out forward))
+        {
+            scope = 0f;
+            forward = 0f;
+            return;
+        }
+
+        scope = Snap(scope);
+        forward = Snap(forward);
+    }
+
+    private static float Snap(float value)
+    {
+        return Mathf.Clamp(Mathf.Round(value * 1000f) / 1000f, -Max, Max);
+    }
+
+    private static string Status(InventorySlot slot, string sightName, bool pending)
+    {
+        if (pending)
+        {
+            return "Not saved yet.";
+        }
+
+        if (TryTarget(slot, sightName, out (InventorySlot Slot, string Weapon, string Sight) key, out _) && Saved.ContainsKey(key))
+        {
+            return "Saved for this weapon and sight.";
+        }
+
+        return "Default alignment for this weapon.";
     }
 
     private static void Write((InventorySlot Slot, string Weapon, string Sight) key, float scope, float forward)
@@ -535,15 +824,12 @@ internal static class ScopeAlignment
             return false;
         }
 
-        float scopeDefault = DefaultScope(key.Weapon);
-        string placement = Mathf.Abs(scopeDefault) < 0.00001f
-            ? "0 keeps the authored placement."
-            : "Default scope height is " + Signed(scopeDefault) + ".";
         string weapon = SlotName(key.Slot) + " weapon " + key.Weapon + ", sight " + key.Sight + ". Meters. Stored for this weapon and sight only.";
+        BuiltIn(key.Weapon, out float scopeDefault, out float forwardDefault);
         Saved[key] = new Pair
         {
-            Scope = Plugin.Instance.Config.Bind(Section, ConfigKey(key.Slot, key.Weapon, stem, 0), scopeDefault, weapon + " Positive moves up. " + placement),
-            Forward = Plugin.Instance.Config.Bind(Section, ConfigKey(key.Slot, key.Weapon, stem, 1), 0f, weapon + " Positive moves the sight forward, toward the muzzle.")
+            Scope = Plugin.Instance.Config.Bind(Section, ConfigKey(key.Slot, key.Weapon, stem, 0), scopeDefault, weapon + " Positive moves up."),
+            Forward = Plugin.Instance.Config.Bind(Section, ConfigKey(key.Slot, key.Weapon, stem, 1), forwardDefault, weapon + " Positive moves the sight forward, toward the muzzle.")
         };
         return true;
     }
@@ -676,32 +962,6 @@ internal static class ScopeAlignment
         weaponKey = rest.Substring(0, second);
         stem = rest.Substring(second + 1);
         return weaponKey.Length > 0 && stem.Length > 0;
-    }
-
-    internal static void NoteWeapon(string blockName, string weaponKey)
-    {
-        if (string.IsNullOrEmpty(blockName) || string.IsNullOrEmpty(weaponKey) || DefaultScopeByWeapon.ContainsKey(weaponKey))
-        {
-            return;
-        }
-
-        if (!DefaultScopeByName.TryGetValue(blockName, out float scope))
-        {
-            return;
-        }
-
-        DefaultScopeByWeapon.Add(weaponKey, scope);
-        Plugin.LogSource.LogInfo("Default scope alignment for " + blockName + " (" + weaponKey + "): " + Signed(scope) + ".");
-    }
-
-    private static float DefaultScope(string weaponKey)
-    {
-        if (weaponKey != null && DefaultScopeByWeapon.TryGetValue(weaponKey, out float scope))
-        {
-            return scope;
-        }
-
-        return 0f;
     }
 
     private static string ConfigKey(InventorySlot slot, string weaponKey, string stem, int kind)

@@ -227,7 +227,42 @@ internal static class ScopeLoadoutCategory
             window.RespawnInfoBoxFromPrefab(bar.m_popupInfoBoxWeaponPrefab);
         }
 
-        Draw(InventorySlot.GearStandard, 0, null);
+        InventorySlot slot = InventorySlot.GearStandard;
+        int key = 0;
+        if (GameStateManager.CurrentStateName == eGameStateName.InLevel && TryWieldedWeapon(out InventorySlot wielded))
+        {
+            slot = wielded;
+            key = wielded == InventorySlot.GearSpecial ? 1 : 0;
+        }
+
+        Draw(slot, key, null);
+    }
+
+    private static bool TryWieldedWeapon(out InventorySlot slot)
+    {
+        slot = InventorySlot.GearStandard;
+        try
+        {
+            PlayerAgent agent = PlayerManager.GetLocalPlayerAgent();
+            if (agent == null || agent.Inventory == null)
+            {
+                return false;
+            }
+
+            InventorySlot wielded = agent.Inventory.WieldedSlot;
+            if (wielded != InventorySlot.GearStandard && wielded != InventorySlot.GearSpecial)
+            {
+                return false;
+            }
+
+            slot = wielded;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Wielded weapon: " + ex.Message);
+            return false;
+        }
     }
 
     private static void AddHeader(CM_ScrollWindow window, InventorySlot slot, int key, string title)

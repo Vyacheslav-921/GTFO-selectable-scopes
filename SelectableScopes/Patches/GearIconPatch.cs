@@ -1,7 +1,6 @@
 using CellMenu;
 using Gear;
 using HarmonyLib;
-using Player;
 
 namespace SelectableScopes.Patches;
 
@@ -15,13 +14,7 @@ internal static class GearIconPatch
             return;
         }
 
-        CM_PlayerLobbyBar bar = __instance.m_parentBar;
-        if (bar != null && bar.m_player != null && !bar.m_player.IsLocal)
-        {
-            return;
-        }
-
-        GearIDRange updated = ScopeSight.WithSight(__instance.m_slot, idRange);
+        GearIDRange updated = ScopeSight.IconRange(__instance, idRange);
         if (updated != null)
         {
             idRange = updated;

@@ -35,6 +35,11 @@ public sealed class Plugin : BasePlugin
         harmony.PatchAll(typeof(LobbyBarIntroPatch));
         harmony.PatchAll(typeof(LobbyBarSpawnPatch));
         harmony.PatchAll(typeof(GearSpawnPatch));
+        harmony.PatchAll(typeof(ClipKeepPatch));
+        harmony.PatchAll(typeof(ClipWieldPatch));
+        harmony.PatchAll(typeof(ClipSpawnedPatch));
+        harmony.PatchAll(typeof(ClipUpdatePatch));
+        harmony.PatchAll(typeof(ClipStorePatch));
         harmony.PatchAll(typeof(GearIconPatch));
         harmony.PatchAll(typeof(ScopeModelAlignPatch));
         harmony.PatchAll(typeof(ScopeModelSpawnPatch));
