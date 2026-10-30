@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -194,6 +196,66 @@ internal static class GearJsonEditor
             return asInt;
         }
 
+        if (value.TryGetValue<bool>(out bool asBool))
+        {
+            return asBool ? 1L : 0L;
+        }
+
         return null;
+    }
+
+    internal static string ComponentSignature(string gearJson)
+    {
+        if (!TryParse(gearJson, out JsonObject root))
+        {
+            return null;
+        }
+
+        JsonObject components = Components(root);
+        if (components == null)
+        {
+            return null;
+        }
+
+        Dictionary<int, long> values = new Dictionary<int, long>();
+        foreach (JsonObject component in ComponentObjects(components))
+        {
+            int? componentId = ReadInt(component["c"]);
+            long? componentValue = ReadLong(component["v"]);
+            if (!componentId.HasValue || !componentValue.HasValue || componentId.Value == SightComponentId || componentValue.Value == 0)
+            {
+                continue;
+            }
+
+            values[componentId.Value] = componentValue.Value;
+        }
+
+        return FormatSignature(values);
+    }
+
+    internal static string FormatSignature(Dictionary<int, long> values)
+    {
+        if (values == null || values.Count == 0)
+        {
+            return null;
+        }
+
+        List<int> ids = new List<int>(values.Keys);
+        ids.Sort();
+        StringBuilder builder = new StringBuilder(ids.Count * 8);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            if (i != 0)
+            {
+                builder.Append(';');
+            }
+
+            int id = ids[i];
+            builder.Append(id.ToString(CultureInfo.InvariantCulture));
+            builder.Append(':');
+            builder.Append(values[id].ToString(CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
     }
 }

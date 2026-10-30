@@ -4,6 +4,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using GameData;
+using Gear;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Localization;
 using Player;
@@ -17,6 +18,12 @@ internal static class ScopeCatalog
     internal static string[] SightNames { get; private set; }
 
     internal static Dictionary<uint, ConfigEntry<string>> Weapons { get; private set; }
+
+    private static readonly Dictionary<string, string> WeaponKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly Dictionary<string, string> WeaponTitles = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static eGearComponent[] Components;
 
     internal static void BuildAndApply()
     {
@@ -74,8 +81,9 @@ internal static class ScopeCatalog
         SightNames = names.ToArray();
         AcceptableValueList<string> acceptable = new AcceptableValueList<string>(SightNames);
         ScopeChoices.Bind(acceptable);
+        ScopeAlignment.Bind(SightNames);
         Weapons = new Dictionary<uint, ConfigEntry<string>>();
-        HashSet<string> usedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "General", "Lobby" };
+        HashSet<string> usedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "General", "Lobby", "Alignment" };
         Dictionary<string, string> existing = ReadExistingSights();
         int configured = 0;
         foreach (PlayerOfflineGearDataBlock block in gear)
@@ -102,12 +110,131 @@ internal static class ScopeCatalog
                     "In-game name: " + display + ". Persistent ID: " + block.persistentID + ". Default keeps the current sight. Any other value is a GearSightPart datablock name.",
                     acceptable));
             Weapons.Add(block.persistentID, entry);
+            IndexWeapon(block, display);
             configured++;
         }
 
         Plugin.Instance.Config.Save();
         Plugin.LogSource.LogInfo("Selectable Scopes catalog: " + Sights.Count + " sights, " + configured + " weapons.");
         return true;
+    }
+
+    internal static string WeaponKeyFor(GearIDRange range)
+    {
+        if (range == null)
+        {
+            return null;
+        }
+
+        string signature = null;
+        try
+        {
+            signature = Signature(range);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon signature: " + ex.Message);
+        }
+
+        if (signature != null && WeaponKeys.TryGetValue(signature, out string weaponKey))
+        {
+            return weaponKey;
+        }
+
+        uint category = range.GetCompID(eGearComponent.Category);
+        uint receiver = range.GetCompID(eGearComponent.ReceiverPart);
+        if (category == 0 && receiver == 0)
+        {
+            string name = range.PublicGearName;
+            return string.IsNullOrWhiteSpace(name) ? null : "name-" + SanitizeKey(name);
+        }
+
+        return "cat-" + category.ToString(CultureInfo.InvariantCulture) + "-rec-" + receiver.ToString(CultureInfo.InvariantCulture);
+    }
+
+    internal static string WeaponTitleFor(string weaponKey, GearIDRange range)
+    {
+        if (weaponKey != null && WeaponTitles.TryGetValue(weaponKey, out string title) && !string.IsNullOrWhiteSpace(title))
+        {
+            return title;
+        }
+
+        if (range != null && !string.IsNullOrWhiteSpace(range.PublicGearName))
+        {
+            return range.PublicGearName;
+        }
+
+        return "Weapon";
+    }
+
+    private static void IndexWeapon(PlayerOfflineGearDataBlock block, string display)
+    {
+        string weaponKey = block.persistentID.ToString(CultureInfo.InvariantCulture);
+        if (!WeaponTitles.ContainsKey(weaponKey))
+        {
+            WeaponTitles.Add(weaponKey, string.IsNullOrWhiteSpace(display) ? block.name : display);
+        }
+
+        string resolved = weaponKey;
+        string signature = GearJsonEditor.ComponentSignature(block.GearJSON);
+        if (signature != null)
+        {
+            if (WeaponKeys.TryGetValue(signature, out string existing))
+            {
+                resolved = existing;
+            }
+            else
+            {
+                WeaponKeys.Add(signature, weaponKey);
+            }
+        }
+
+        ScopeAlignment.NoteWeapon(block.name, resolved);
+    }
+
+    private static string Signature(GearIDRange range)
+    {
+        if (Components == null)
+        {
+            Components = (eGearComponent[])Enum.GetValues(typeof(eGearComponent));
+        }
+
+        Dictionary<int, long> values = new Dictionary<int, long>();
+        for (int i = 0; i < Components.Length; i++)
+        {
+            eGearComponent component = Components[i];
+            if (component == eGearComponent.None || component == eGearComponent.SightPart)
+            {
+                continue;
+            }
+
+            uint value = range.GetCompID(component);
+            if (value == 0)
+            {
+                continue;
+            }
+
+            values[(int)component] = value;
+        }
+
+        return GearJsonEditor.FormatSignature(values);
+    }
+
+    private static string SanitizeKey(string name)
+    {
+        StringBuilder builder = new StringBuilder(name.Length);
+        foreach (char character in name)
+        {
+            bool reserved = character switch
+            {
+                ' ' or '\t' or '\n' or '\r' or '[' or ']' or '=' or '#' => true,
+                _ => false
+            };
+            builder.Append(reserved ? '_' : character);
+        }
+
+        string text = builder.ToString().Trim('_');
+        return text.Length == 0 ? "weapon" : text;
     }
 
     private static bool ShouldConfigure(string gearJson)

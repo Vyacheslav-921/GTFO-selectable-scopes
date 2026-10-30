@@ -36,6 +36,9 @@ public sealed class Plugin : BasePlugin
         harmony.PatchAll(typeof(LobbyBarSpawnPatch));
         harmony.PatchAll(typeof(GearSpawnPatch));
         harmony.PatchAll(typeof(GearIconPatch));
+        harmony.PatchAll(typeof(ScopeModelAlignPatch));
+        harmony.PatchAll(typeof(ScopeModelSpawnPatch));
+        harmony.PatchAll(typeof(ScopeModelForgetPatch));
         EventAPI.OnAssetsLoaded += ScopeCatalog.BuildAndApply;
         Log.LogInfo("Selectable Scopes loaded. Weapon entries are written after game data loads.");
     }

@@ -14,6 +14,22 @@ internal static class ScopeLoadoutCategory
 
     private const string CardName = "SelectableScopes.Sight";
 
+    private const string ScopeUpId = "\u0001scope-up";
+
+    private const string ScopeDownId = "\u0001scope-down";
+
+    private const string ForwardId = "\u0001scope-forward";
+
+    private const string BackId = "\u0001scope-back";
+
+    private const string SaveId = "\u0001align-save";
+
+    private const string ResetId = "\u0001align-reset";
+
+    private static readonly Color SaveColor = new Color(0.62f, 1f, 0.62f, 1f);
+
+    private static readonly Color ResetColor = new Color(1f, 0.78f, 0.45f, 1f);
+
     private const string SkinsGuid = "io.takina.gtfo.Skins";
 
     private static readonly Color Accent = new Color(0.54f, 0.71f, 0.98f, 1f);
@@ -237,16 +253,16 @@ internal static class ScopeLoadoutCategory
         DestroyCards();
         string current = ScopeChoices.Display(slot);
         Il2CppSystem.Collections.Generic.List<iScrollWindowContent> contents = new Il2CppSystem.Collections.Generic.List<iScrollWindowContent>();
+        AddContent(contents, bar, ScopeUpId, false);
+        AddContent(contents, bar, ScopeDownId, false);
+        AddContent(contents, bar, ForwardId, false);
+        AddContent(contents, bar, BackId, false);
+        AddContent(contents, bar, SaveId, false);
+        AddContent(contents, bar, ResetId, false);
         for (int i = 0; i < ScopeCatalog.SightNames.Length; i++)
         {
             string sightName = ScopeCatalog.SightNames[i];
-            CM_LobbyScrollItem card = CreateCard(bar, sightName, string.Equals(sightName, current, StringComparison.Ordinal));
-            if (card == null)
-            {
-                continue;
-            }
-
-            contents.Add(new iScrollWindowContent(card.Pointer));
+            AddContent(contents, bar, sightName, string.Equals(sightName, current, StringComparison.Ordinal));
         }
 
         window.SetContentItems(contents, 0f);
@@ -271,7 +287,18 @@ internal static class ScopeLoadoutCategory
             }
 
             string sightName = RowNames[i];
-            BindRow(card, sightName, string.Equals(sightName, current, StringComparison.Ordinal), slot, key);
+            if (TryAdjust(sightName, out int kind, out int direction))
+            {
+                BindAdjust(card, kind, direction, slot, key);
+            }
+            else if (TryCommit(sightName, out bool saving))
+            {
+                BindCommit(card, saving, slot, key);
+            }
+            else
+            {
+                BindRow(card, sightName, string.Equals(sightName, current, StringComparison.Ordinal), slot, key);
+            }
         }
 
         ShowInfo(current);
@@ -286,6 +313,152 @@ internal static class ScopeLoadoutCategory
         bar.Select();
         bar.ShowPopup();
         window.SelectHeader(key);
+    }
+
+    private static void AddContent(Il2CppSystem.Collections.Generic.List<iScrollWindowContent> contents, CM_PlayerLobbyBar bar, string sightName, bool selected)
+    {
+        CM_LobbyScrollItem card = CreateCard(bar, sightName, selected);
+        if (card != null)
+        {
+            contents.Add(new iScrollWindowContent(card.Pointer));
+        }
+    }
+
+    private static bool TryAdjust(string sightName, out int kind, out int direction)
+    {
+        kind = 0;
+        direction = 0;
+        if (string.Equals(sightName, ScopeUpId, StringComparison.Ordinal))
+        {
+            direction = 1;
+            return true;
+        }
+
+        if (string.Equals(sightName, ScopeDownId, StringComparison.Ordinal))
+        {
+            direction = -1;
+            return true;
+        }
+
+        if (string.Equals(sightName, ForwardId, StringComparison.Ordinal))
+        {
+            kind = 1;
+            direction = 1;
+            return true;
+        }
+
+        if (string.Equals(sightName, BackId, StringComparison.Ordinal))
+        {
+            kind = 1;
+            direction = -1;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryCommit(string sightName, out bool save)
+    {
+        if (string.Equals(sightName, SaveId, StringComparison.Ordinal))
+        {
+            save = true;
+            return true;
+        }
+
+        if (string.Equals(sightName, ResetId, StringComparison.Ordinal))
+        {
+            save = false;
+            return true;
+        }
+
+        save = false;
+        return false;
+    }
+
+    private static void BindAdjust(CM_LobbyScrollItem card, int kind, int direction, InventorySlot slot, int key)
+    {
+        card.IsSelected = false;
+        card.IsDimmed = false;
+        Transform background = card.transform.Find("Background");
+        if (background != null)
+        {
+            background.gameObject.SetActive(false);
+        }
+
+        StampRow(card, ScopeAlignment.RowLabel(kind, direction, slot, ScopeChoices.Display(slot)), false, Accent);
+        FitCardHitbox(card);
+        int capturedKind = kind;
+        int capturedDirection = direction;
+        InventorySlot capturedSlot = slot;
+        int capturedKey = key;
+        card.SetOnBtnPressCallback(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>((Action<int>)(_ => NudgeRow(capturedSlot, capturedKey, capturedKind, capturedDirection))));
+        card.OnBtnHoverChanged = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int, bool>>((Action<int, bool>)((_, _) =>
+        {
+            if (OpenBar == null || OpenSlot != capturedSlot)
+            {
+                return;
+            }
+
+            ShowInfo(ScopeChoices.Display(capturedSlot));
+        }));
+        card.m_inIntro = false;
+        card.SetButtonEnabled(true);
+    }
+
+    private static void NudgeRow(InventorySlot slot, int key, int kind, int direction)
+    {
+        if (!ScopeAlignment.Nudge(slot, ScopeChoices.Display(slot), kind, direction))
+        {
+            return;
+        }
+
+        CM_ScrollWindow window = OpenBar != null ? OpenBar.m_popupScrollWindow : null;
+        float scroll = window != null ? window.m_posOffset : 0f;
+        Draw(slot, key, scroll);
+    }
+
+    private static void BindCommit(CM_LobbyScrollItem card, bool save, InventorySlot slot, int key)
+    {
+        card.IsSelected = false;
+        card.IsDimmed = false;
+        Transform background = card.transform.Find("Background");
+        if (background != null)
+        {
+            background.gameObject.SetActive(false);
+        }
+
+        string sightName = ScopeChoices.Display(slot);
+        StampRow(card, save ? ScopeAlignment.SaveLabel(slot, sightName) : ScopeAlignment.ResetLabel(), false, save ? SaveColor : ResetColor);
+        FitCardHitbox(card);
+        bool capturedSave = save;
+        InventorySlot capturedSlot = slot;
+        int capturedKey = key;
+        card.SetOnBtnPressCallback(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>((Action<int>)(_ => CommitRow(capturedSlot, capturedKey, capturedSave))));
+        card.OnBtnHoverChanged = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int, bool>>((Action<int, bool>)((_, _) =>
+        {
+            if (OpenBar == null || OpenSlot != capturedSlot)
+            {
+                return;
+            }
+
+            ShowInfo(ScopeChoices.Display(capturedSlot));
+        }));
+        card.m_inIntro = false;
+        card.SetButtonEnabled(true);
+    }
+
+    private static void CommitRow(InventorySlot slot, int key, bool save)
+    {
+        string sightName = ScopeChoices.Display(slot);
+        bool changed = save ? ScopeAlignment.Save(slot, sightName) : ScopeAlignment.Reset(slot, sightName);
+        if (!changed)
+        {
+            return;
+        }
+
+        CM_ScrollWindow window = OpenBar != null ? OpenBar.m_popupScrollWindow : null;
+        float scroll = window != null ? window.m_posOffset : 0f;
+        Draw(slot, key, scroll);
     }
 
     private static CM_LobbyScrollItem CreateCard(CM_PlayerLobbyBar bar, string sightName, bool selected)
@@ -358,7 +531,7 @@ internal static class ScopeLoadoutCategory
             background.gameObject.SetActive(selected);
         }
 
-        StampRow(card, ScopeCatalog.Title(sightName), selected);
+        StampRow(card, ScopeCatalog.Title(sightName), selected, null);
         FitCardHitbox(card);
         string capturedName = sightName;
         InventorySlot capturedSlot = slot;
@@ -377,7 +550,7 @@ internal static class ScopeLoadoutCategory
         card.SetButtonEnabled(true);
     }
 
-    private static void StampRow(CM_LobbyScrollItem card, string title, bool selected)
+    private static void StampRow(CM_LobbyScrollItem card, string title, bool selected, Color? tint)
     {
         KeepTextOpaque(card);
         TextMeshPro label = card.m_subTitleText != null ? card.m_subTitleText : card.m_nameText;
@@ -390,7 +563,7 @@ internal static class ScopeLoadoutCategory
             label.overflowMode = TextOverflowModes.Ellipsis;
             label.alignment = TextAlignmentOptions.MidlineLeft;
             label.text = selected ? title + "    SELECTED" : title;
-            label.color = selected ? SelectedColor : Color.white;
+            label.color = tint ?? (selected ? SelectedColor : Color.white);
             label.alpha = 1f;
             label.ForceMeshUpdate();
         }
@@ -499,7 +672,7 @@ internal static class ScopeLoadoutCategory
 
         bool selected = string.Equals(sightName, ScopeChoices.Display(OpenSlot), StringComparison.Ordinal);
         string title = ScopeCatalog.Title(sightName);
-        string description = ScopeCatalog.Describe(sightName, OpenSlot, selected);
+        string description = ScopeCatalog.Describe(sightName, OpenSlot, selected) + "\n\n" + ScopeAlignment.Summary(OpenSlot, sightName, selected);
         try
         {
             box.SetInfoBox(title, string.Empty, description, string.Empty, string.Empty, null);
@@ -835,6 +1008,13 @@ internal static class ScopeLoadoutCategory
         }
 
         return button;
+    }
+
+    internal static bool TryEditing(out InventorySlot slot)
+    {
+        slot = OpenSlot;
+        CM_ScrollWindow window = OpenBar != null ? OpenBar.m_popupScrollWindow : null;
+        return window != null && window.gameObject.activeInHierarchy && OpenBar.m_popupVisible;
     }
 
     private static bool IsLocal(CM_PlayerLobbyBar bar)
