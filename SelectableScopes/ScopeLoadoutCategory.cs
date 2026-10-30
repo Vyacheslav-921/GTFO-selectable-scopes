@@ -1,6 +1,6 @@
-using BepInEx.Unity.IL2CPP;
 using CellMenu;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Player;
 using SNetwork;
 using TMPro;
@@ -29,8 +29,6 @@ internal static class ScopeLoadoutCategory
     private static readonly Color SaveColor = new Color(0.62f, 1f, 0.62f, 1f);
 
     private static readonly Color ResetColor = new Color(1f, 0.78f, 0.45f, 1f);
-
-    private const string SkinsGuid = "io.takina.gtfo.Skins";
 
     private static readonly Color Accent = new Color(0.54f, 0.71f, 0.98f, 1f);
 
@@ -167,16 +165,118 @@ internal static class ScopeLoadoutCategory
         FitButton(button, width, height);
 
         float gap = Mathf.Max(headerWorldHeight * 0.45f, 0.01f);
-        float targetY = textRight.y;
-        if (IL2CPPChainloader.Instance != null && IL2CPPChainloader.Instance.Plugins.ContainsKey(SkinsGuid))
-        {
-            targetY -= (height * scaleY) + gap;
-        }
-
         Vector3 position = rect.position;
         position.x = textRight.x + gap;
-        position.y = targetY;
+        position.y = textRight.y;
         rect.position = position;
+        ClearRow(rect, textRight.x, gap);
+    }
+
+    private static void ClearRow(RectTransform rect, float titleRight, float gap)
+    {
+        if (rect.parent == null)
+        {
+            return;
+        }
+
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            if (!TryBlocker(rect, out float blockerLeft, out float blockerRight))
+            {
+                return;
+            }
+
+            if (!WorldSpan(rect, out float left, out float right, out _, out _))
+            {
+                return;
+            }
+
+            float besideTitle = titleRight + gap;
+            float leftSpot = blockerLeft - gap - (right - left);
+            Vector3 position = rect.position;
+            position.x = leftSpot >= besideTitle ? leftSpot : blockerRight + gap;
+            rect.position = position;
+        }
+    }
+
+    private static bool TryBlocker(RectTransform rect, out float blockerLeft, out float blockerRight)
+    {
+        blockerLeft = 0f;
+        blockerRight = 0f;
+        Transform parent = rect.parent;
+        if (parent == null || !WorldSpan(rect, out float ourLeft, out float ourRight, out float ourBottom, out float ourTop))
+        {
+            return false;
+        }
+
+        float ourWidth = ourRight - ourLeft;
+        float ourHeight = ourTop - ourBottom;
+        bool found = false;
+        for (int i = 0; i < parent.childCount; i++)
+        {
+            Transform child = parent.GetChild(i);
+            if (child == null || child.gameObject == rect.gameObject || !child.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            CM_LobbyScrollItem item = child.GetComponent<CM_LobbyScrollItem>();
+            RectTransform other = item != null ? item.GetComponent<RectTransform>() : null;
+            if (other == null || !WorldSpan(other, out float left, out float right, out float bottom, out float top))
+            {
+                continue;
+            }
+
+            if (right - left > ourWidth * 2.5f || top - bottom > ourHeight * 2.5f)
+            {
+                continue;
+            }
+
+            if (!Overlaps(ourLeft, ourRight, ourBottom, ourTop, left, right, bottom, top))
+            {
+                continue;
+            }
+
+            if (!found || left < blockerLeft)
+            {
+                blockerLeft = left;
+            }
+
+            if (!found || right > blockerRight)
+            {
+                blockerRight = right;
+            }
+
+            found = true;
+        }
+
+        return found;
+    }
+
+    private static bool WorldSpan(RectTransform rect, out float left, out float right, out float bottom, out float top)
+    {
+        left = 0f;
+        right = 0f;
+        bottom = 0f;
+        top = 0f;
+        if (rect == null)
+        {
+            return false;
+        }
+
+        Il2CppStructArray<Vector3> corners = new Il2CppStructArray<Vector3>(4);
+        rect.GetWorldCorners(corners);
+        left = Mathf.Min(Mathf.Min(corners[0].x, corners[1].x), Mathf.Min(corners[2].x, corners[3].x));
+        right = Mathf.Max(Mathf.Max(corners[0].x, corners[1].x), Mathf.Max(corners[2].x, corners[3].x));
+        bottom = Mathf.Min(Mathf.Min(corners[0].y, corners[1].y), Mathf.Min(corners[2].y, corners[3].y));
+        top = Mathf.Max(Mathf.Max(corners[0].y, corners[1].y), Mathf.Max(corners[2].y, corners[3].y));
+        return right - left > 0.0001f && top - bottom > 0.0001f;
+    }
+
+    private static bool Overlaps(float aLeft, float aRight, float aBottom, float aTop, float bLeft, float bRight, float bBottom, float bTop)
+    {
+        const float slop = 0.001f;
+        return aLeft < bRight - slop && aRight > bLeft + slop && aBottom < bTop - slop && aTop > bBottom + slop;
     }
 
     private static void Open(CM_PlayerLobbyBar bar)

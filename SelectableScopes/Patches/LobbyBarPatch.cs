@@ -6,6 +6,7 @@ namespace SelectableScopes.Patches;
 [HarmonyPatch(typeof(CM_PlayerLobbyBar), nameof(CM_PlayerLobbyBar.SetupFromPage))]
 internal static class LobbyBarPatch
 {
+    [HarmonyPriority(Priority.Last)]
     private static void Postfix(CM_PlayerLobbyBar __instance)
     {
         ScopeLoadoutCategory.EnsureButton(__instance);

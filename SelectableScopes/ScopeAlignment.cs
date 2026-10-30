@@ -12,9 +12,7 @@ namespace SelectableScopes;
 
 internal static class ScopeAlignment
 {
-    internal const float Step = 0.02f;
-
-    private const float ForwardStep = 0.001f;
+    internal const float Step = 0.005f;
 
     private const float Max = 0.25f;
 
@@ -92,8 +90,7 @@ internal static class ScopeAlignment
 
         ReadCurrent(key, out float scope, out float forward);
         float current = kind == 0 ? scope : forward;
-        float step = kind == 0 ? Step : ForwardStep;
-        float value = Mathf.Clamp(Mathf.Round((current + (direction * step)) * 1000f) / 1000f, -Max, Max);
+        float value = Mathf.Clamp(Mathf.Round((current + (direction * Step)) * 1000f) / 1000f, -Max, Max);
         if (Mathf.Abs(value - current) < 0.0000001f)
         {
             return false;
@@ -189,7 +186,7 @@ internal static class ScopeAlignment
 
         if (!TryValues(slot, sightName, out float scope, out float forward, out string weaponTitle, out bool pending))
         {
-            return "Equip a " + slotName.ToLowerInvariant() + " weapon, then use the rows at the top. Scope up and down move " + Step.ToString("0.00", CultureInfo.InvariantCulture) + " m per click.";
+            return "Equip a " + slotName.ToLowerInvariant() + " weapon, then use the rows at the top. Each click moves the sight " + Step.ToString("0.000", CultureInfo.InvariantCulture) + " m.";
         }
 
         StringBuilder builder = new StringBuilder();
