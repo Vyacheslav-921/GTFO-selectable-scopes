@@ -394,9 +394,10 @@ internal static class ScopeLoadoutCategory
         AddContent(contents, bar, BackId, false);
         AddContent(contents, bar, SaveId, false);
         AddContent(contents, bar, ResetId, false);
-        for (int i = 0; i < ScopeCatalog.SightNames.Length; i++)
+        string[] sights = OrderedSights();
+        for (int i = 0; i < sights.Length; i++)
         {
-            string sightName = ScopeCatalog.SightNames[i];
+            string sightName = sights[i];
             AddContent(contents, bar, sightName, string.Equals(sightName, current, StringComparison.Ordinal));
         }
 
@@ -448,6 +449,125 @@ internal static class ScopeLoadoutCategory
         bar.Select();
         bar.ShowPopup();
         window.SelectHeader(key);
+    }
+
+    private static string[] OrderedSights()
+    {
+        string[] sights = ScopeCatalog.SightNames;
+        string fallback = null;
+        List<string> scopes = new List<string>(sights.Length);
+        for (int i = 0; i < sights.Length; i++)
+        {
+            string sightName = sights[i];
+            if (fallback == null && IsMenuDefault(sightName))
+            {
+                fallback = sightName;
+                continue;
+            }
+
+            if (ScopeCatalog.IsUnusableScope(sightName) || ScopeCatalog.IsUnusableScope(ScopeCatalog.Title(sightName)))
+            {
+                continue;
+            }
+
+            scopes.Add(sightName);
+        }
+
+        scopes.Sort(CompareSights);
+        if (fallback != null)
+        {
+            scopes.Insert(0, fallback);
+        }
+
+        return scopes.ToArray();
+    }
+
+    private static bool IsMenuDefault(string sightName)
+    {
+        return string.IsNullOrEmpty(sightName) || string.Equals(sightName, GearJsonEditor.DefaultSight, StringComparison.Ordinal);
+    }
+
+    private static int CompareSights(string left, string right)
+    {
+        int byTitle = CompareTitle(ScopeCatalog.Title(left), ScopeCatalog.Title(right));
+        return byTitle != 0 ? byTitle : string.Compare(left, right, StringComparison.Ordinal);
+    }
+
+    private static int CompareTitle(string left, string right)
+    {
+        left ??= string.Empty;
+        right ??= string.Empty;
+        int i = 0;
+        int j = 0;
+        while (i < left.Length && j < right.Length)
+        {
+            if (char.IsDigit(left[i]) && char.IsDigit(right[j]))
+            {
+                int leftEnd = i;
+                int rightEnd = j;
+                while (leftEnd < left.Length && char.IsDigit(left[leftEnd]))
+                {
+                    leftEnd++;
+                }
+
+                while (rightEnd < right.Length && char.IsDigit(right[rightEnd]))
+                {
+                    rightEnd++;
+                }
+
+                int byNumber = CompareNumber(left, i, leftEnd, right, j, rightEnd);
+                if (byNumber != 0)
+                {
+                    return byNumber;
+                }
+
+                i = leftEnd;
+                j = rightEnd;
+                continue;
+            }
+
+            int byLetter = char.ToUpperInvariant(left[i]) - char.ToUpperInvariant(right[j]);
+            if (byLetter != 0)
+            {
+                return byLetter;
+            }
+
+            i++;
+            j++;
+        }
+
+        return (left.Length - i) - (right.Length - j);
+    }
+
+    private static int CompareNumber(string left, int leftStart, int leftEnd, string right, int rightStart, int rightEnd)
+    {
+        while (leftStart < leftEnd && left[leftStart] == '0')
+        {
+            leftStart++;
+        }
+
+        while (rightStart < rightEnd && right[rightStart] == '0')
+        {
+            rightStart++;
+        }
+
+        int leftCount = leftEnd - leftStart;
+        int rightCount = rightEnd - rightStart;
+        if (leftCount != rightCount)
+        {
+            return leftCount - rightCount;
+        }
+
+        for (int i = 0; i < leftCount; i++)
+        {
+            int difference = left[leftStart + i] - right[rightStart + i];
+            if (difference != 0)
+            {
+                return difference;
+            }
+        }
+
+        return 0;
     }
 
     private static void AddContent(Il2CppSystem.Collections.Generic.List<iScrollWindowContent> contents, CM_PlayerLobbyBar bar, string sightName, bool selected)

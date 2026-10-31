@@ -31,7 +31,7 @@ internal static class ScopeCatalog
     private static readonly Dictionary<string, AlignmentDefault> AlignmentPresets = new Dictionary<string, AlignmentDefault>(StringComparer.OrdinalIgnoreCase)
     {
         { "HighCalPistol", new AlignmentDefault { Vertical = -0.02f, Forward = -0.05f } }, // Shelling Arid 5
-        { "PistolSemi", new AlignmentDefault { Vertical = -0.02f, Forward = -0.07f } }, // Shelling S49
+        { "PistolSemi", new AlignmentDefault { Vertical = -0.035f, Forward = -0.07f } }, // Shelling S49
         { "PistolBurst", new AlignmentDefault { Vertical = -0.02f, Forward = -0.072f } }, // Shelling Nano
         { "Autopistol staggering", new AlignmentDefault { Vertical = 0f, Forward = -0.045f } }, // Raptus Steigro, HEL autopistol
         { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
@@ -51,6 +51,8 @@ internal static class ScopeCatalog
     };
 
     private static readonly HashSet<string> ExcludedSignatures = new HashSet<string>(StringComparer.Ordinal);
+
+    private static readonly HashSet<string> HiddenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private static eGearComponent[] Components;
 
@@ -80,8 +82,10 @@ internal static class ScopeCatalog
         }
 
         Sights = new Dictionary<string, uint>(StringComparer.Ordinal);
+        HiddenNames.Clear();
         List<string> names = new List<string> { GearJsonEditor.DefaultSight };
         int skippedFrontIrons = 0;
+        int skippedUnusable = 0;
         foreach (GearSightPartDataBlock block in sights)
         {
             if (block == null)
@@ -92,6 +96,12 @@ internal static class ScopeCatalog
             if (IsFrontIronSight(block.name))
             {
                 skippedFrontIrons++;
+                continue;
+            }
+
+            if (IsHiddenScope(block))
+            {
+                skippedUnusable++;
                 continue;
             }
 
@@ -175,6 +185,10 @@ internal static class ScopeCatalog
         if (skippedFrontIrons > 0)
         {
             Plugin.LogSource.LogInfo("Left out " + skippedFrontIrons + " front iron sights. The rear sight is the one that aims.");
+        }
+        if (skippedUnusable > 0)
+        {
+            Plugin.LogSource.LogInfo("Left out " + skippedUnusable + " unusable sights (Sight 11, IRON_SIGHTS 2B, IRON_SIGHTS 11).");
         }
         return true;
     }
@@ -392,6 +406,70 @@ internal static class ScopeCatalog
         return body.EndsWith("_F", StringComparison.OrdinalIgnoreCase);
     }
 
+    internal static bool IsUnusableScope(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return false;
+        }
+
+        if (HiddenNames.Contains(name))
+        {
+            return true;
+        }
+
+        int hash = name.IndexOf('#');
+        if (hash >= 0)
+        {
+            name = name.Substring(0, hash);
+        }
+
+        const string copy = "_Copy";
+        while (name.EndsWith(copy, StringComparison.OrdinalIgnoreCase))
+        {
+            name = name.Substring(0, name.Length - copy.Length);
+        }
+
+        if (HiddenNames.Contains(name) || string.Equals(name, "Sight_11", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string compact = CompactLabel(name);
+        return compact == "IRONSIGHTS2B" || compact == "IRONSIGHTS11";
+    }
+
+    private static bool IsHiddenScope(GearSightPartDataBlock block)
+    {
+        if (!IsUnusableScope(block.name) && !IsUnusableScope(TitleOf(block, block.name)))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(block.name))
+        {
+            HiddenNames.Add(block.name);
+        }
+
+        return true;
+    }
+
+    private static string CompactLabel(string name)
+    {
+        StringBuilder builder = new StringBuilder(name.Length);
+        foreach (char character in name)
+        {
+            if (character == ' ' || character == '_' || character == '#')
+            {
+                continue;
+            }
+
+            builder.Append(char.ToUpperInvariant(character));
+        }
+
+        return builder.ToString();
+    }
+
     internal static bool AppliesTo(GearIDRange range)
     {
         if (range == null || ExcludedSignatures.Count == 0)
@@ -544,7 +622,11 @@ internal static class ScopeCatalog
             return "Default";
         }
 
-        GearSightPartDataBlock block = Find(sightName);
+        return TitleOf(Find(sightName), sightName);
+    }
+
+    private static string TitleOf(GearSightPartDataBlock block, string fallback)
+    {
         string publicName = block?.General?.PublicName;
         if (!string.IsNullOrWhiteSpace(publicName))
         {
@@ -555,7 +637,8 @@ internal static class ScopeCatalog
             }
         }
 
-        return Prettify(block != null && !string.IsNullOrWhiteSpace(block.name) ? block.name : sightName);
+        string source = block != null && !string.IsNullOrWhiteSpace(block.name) ? block.name : fallback;
+        return Prettify(source);
     }
 
     internal static string Describe(string sightName, InventorySlot slot, bool selected)

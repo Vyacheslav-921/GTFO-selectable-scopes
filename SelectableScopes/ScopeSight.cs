@@ -9,9 +9,29 @@ internal static class ScopeSight
 {
     private static readonly Dictionary<string, uint> Originals = new Dictionary<string, uint>(StringComparer.Ordinal);
 
+    private static readonly Dictionary<string, GearIDRange> Prepared = new Dictionary<string, GearIDRange>(StringComparer.Ordinal);
+
     private static readonly Dictionary<InventorySlot, HeldClip> PendingClips = new Dictionary<InventorySlot, HeldClip>();
 
+    private static readonly HashSet<uint> PostedIcons = new HashSet<uint>();
+
     private static int MaintainedFrame = -1;
+
+    private static int IconFrame = -1;
+
+    private static int IconWait;
+
+    private static bool IconsPending;
+
+    private static bool IconsRetry;
+
+    private static int IconRetries;
+
+    private static int IconQuiet;
+
+    private static bool IconsAwaitJob;
+
+    private static bool IconSawJob;
 
     private static bool Equipping;
 
@@ -31,57 +51,95 @@ internal static class ScopeSight
         }
 
         uint wanted = ScopeChoices.TryGetSightId(slot, out uint chosen) ? chosen : original;
-        if (current == wanted)
-        {
-            return null;
-        }
-
-        GearIDRange copy = Copy(source);
-        if (copy == null)
-        {
-            source.SetCompID(eGearComponent.SightPart, wanted, false);
-            return null;
-        }
-
-        copy.SetCompID(eGearComponent.SightPart, wanted, false);
-        return copy;
+        return WithSightChange(source, wanted);
     }
 
     internal static GearIDRange IconRange(CM_InventorySlotItem item, GearIDRange source)
     {
-        if (item != null
-            && !item.m_isWeaponPicker
-            && IsWeaponSlot(item.m_slot)
-            && IsLocal(item)
-            && ScopeChoices.TryGetSightId(item.m_slot, out _))
+        if (item == null || source == null || !IsWeaponSlot(item.m_slot) || !IsLocal(item))
         {
-            return WithSight(item.m_slot, source);
+            return null;
         }
 
-        return WithAuthoredSight(source);
+        return SightForIcon(item.m_slot, source);
     }
 
-    internal static GearIDRange WithAuthoredSight(GearIDRange source)
+    internal static void RequestWeaponIcons()
     {
-        if (!Plugin.Ready || source == null || !ScopeCatalog.TryGetAuthoredSight(source, out bool hadSight, out uint authored))
+        RequestWeaponIcons(InventorySlot.GearStandard);
+        RequestWeaponIcons(InventorySlot.GearSpecial);
+    }
+
+    internal static void RequestWeaponIcons(InventorySlot slot)
+    {
+        if (!Plugin.Ready || !IsWeaponSlot(slot))
         {
-            return null;
+            return;
         }
 
-        uint wanted = hadSight ? authored : 0u;
-        if (source.GetCompID(eGearComponent.SightPart) == wanted)
+        int posted = PostMissingIcons(slot);
+        if (posted < 0)
         {
-            return null;
+            IconRetries++;
+            if (IconRetries <= 40)
+            {
+                IconsRetry = true;
+                IconsPending = true;
+                IconWait = 0;
+            }
+
+            return;
         }
 
-        GearIDRange copy = Copy(source);
-        if (copy == null)
+        IconRetries = 0;
+
+        if (posted > 0)
         {
-            return null;
+            IconsAwaitJob = true;
+            IconSawJob = false;
+            Plugin.LogSource.LogInfo("Rendering " + posted + " weapon icon" + (posted == 1 ? "" : "s") + " for the current sight.");
         }
 
-        copy.SetCompID(eGearComponent.SightPart, wanted, false);
-        return copy;
+        IconsPending = true;
+        IconWait = 0;
+    }
+
+    internal static void MaintainIconRefresh()
+    {
+        if (!IconsPending && !IconsRetry)
+        {
+            return;
+        }
+
+        int frame = Time.frameCount;
+        if (frame == IconFrame)
+        {
+            return;
+        }
+
+        IconFrame = frame;
+        IconWait++;
+        if (IconsRetry && IconWait % 30 == 0)
+        {
+            IconsRetry = false;
+            RequestWeaponIcons();
+        }
+
+        if (IconRendererBusy() && IconWait < 1800)
+        {
+            return;
+        }
+
+        if (IconWait < 8)
+        {
+            return;
+        }
+
+        IconsPending = false;
+        IconsAwaitJob = false;
+        IconSawJob = false;
+        RefreshIcons(InventorySlot.GearStandard);
+        RefreshIcons(InventorySlot.GearSpecial);
     }
 
     internal static void ApplySelection(InventorySlot slot)
@@ -94,7 +152,11 @@ internal static class ScopeSight
         }
 
         RememberClip(slot);
-        RefreshIcons(slot);
+        if (GameStateManager.CurrentStateName != eGameStateName.InLevel)
+        {
+            RequestWeaponIcons(slot);
+            RefreshIcons(slot);
+        }
         if (Equipping)
         {
             return;
@@ -128,12 +190,19 @@ internal static class ScopeSight
         }
 
         PlayerBackpack backpack = PlayerBackpackManager.LocalBackpack;
+        ItemEquippable previous = item.Instance != null ? item.Instance.TryCast<ItemEquippable>() : null;
+        GameObject previousObject = previous != null ? previous.gameObject : null;
         Equipping = true;
         try
         {
-            if (backpack != null && backpack.HasGear(updated, slot))
+            if (backpack != null)
             {
                 backpack.TryClearSlot(slot);
+            }
+
+            if (previousObject != null)
+            {
+                UnityEngine.Object.Destroy(previousObject);
             }
 
             Stage(slot);
@@ -577,6 +646,124 @@ internal static class ScopeSight
         }
     }
 
+    private static GearIDRange SightForIcon(InventorySlot slot, GearIDRange source)
+    {
+        if (!ScopeChoices.TryGetSightId(slot, out _))
+        {
+            return null;
+        }
+
+        return WithSight(slot, source);
+    }
+
+    private static int PostMissingIcons(InventorySlot slot)
+    {
+        Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<GearIDRange> gears;
+        try
+        {
+            gears = GearManager.GetAllGearForSlot(slot);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon icon list: " + ex.Message);
+            return -1;
+        }
+
+        if (gears == null || gears.Count == 0)
+        {
+            return -1;
+        }
+
+        int posted = 0;
+        for (int i = 0; i < gears.Count; i++)
+        {
+            GearIDRange source = gears[i];
+            if (source == null)
+            {
+                continue;
+            }
+
+            GearIDRange display = SightForIcon(slot, source) ?? source;
+            uint checksum;
+            try
+            {
+                checksum = display.GetChecksum();
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogSource.LogDebug("Weapon icon id: " + ex.Message);
+                continue;
+            }
+
+            if (!PostedIcons.Add(checksum))
+            {
+                continue;
+            }
+
+            if (HasIcon(checksum) && display == source)
+            {
+                continue;
+            }
+
+            try
+            {
+                GearManager.PostIconJobs(display);
+                posted++;
+            }
+            catch (Exception ex)
+            {
+                PostedIcons.Remove(checksum);
+                Plugin.LogSource.LogDebug("Weapon icon job: " + ex.Message);
+            }
+        }
+
+        return posted;
+    }
+
+    private static bool HasIcon(uint checksum)
+    {
+        try
+        {
+            return GearIconRendering.TryGetGearIconSprite(checksum, out Sprite sprite) && sprite != null;
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon icon lookup: " + ex.Message);
+            return false;
+        }
+    }
+
+    private static bool IconRendererBusy()
+    {
+        try
+        {
+            GearIconRendering rendering = GearIconRendering.Current;
+            if (rendering == null || rendering.m_currentJob != null)
+            {
+                if (rendering != null && rendering.m_currentJob != null)
+                {
+                    IconSawJob = true;
+                }
+
+                IconQuiet = 0;
+                return true;
+            }
+
+            if (IconsAwaitJob && !IconSawJob && IconWait < 120)
+            {
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon icon queue: " + ex.Message);
+            return false;
+        }
+
+        IconQuiet++;
+        return IconQuiet < 45;
+    }
+
     private static void RefreshIcons(InventorySlot slot)
     {
         Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<CM_InventorySlotItem> items;
@@ -628,6 +815,44 @@ internal static class ScopeSight
         return bar.m_player.IsLocal;
     }
 
+    private static GearIDRange WithSightChange(GearIDRange source, uint sight)
+    {
+        if (source.GetCompID(eGearComponent.SightPart) == sight)
+        {
+            return null;
+        }
+
+        string key = Identity(source) + "|" + sight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (Prepared.TryGetValue(key, out GearIDRange cached) && cached != null)
+        {
+            CarryIdentity(source, cached);
+            return cached;
+        }
+
+        GearIDRange copy = Copy(source);
+        if (copy == null)
+        {
+            return null;
+        }
+
+        copy.SetCompID(eGearComponent.SightPart, sight, false);
+        CarryIdentity(source, copy);
+        Prepared[key] = copy;
+        return copy;
+    }
+
+    private static void CarryIdentity(GearIDRange source, GearIDRange copy)
+    {
+        copy.PlayfabItemInstanceId = source.PlayfabItemInstanceId;
+        copy.PlayfabItemId = source.PlayfabItemId;
+        copy.PlayfabItemName = source.PlayfabItemName;
+        copy.OfflineGearType = source.OfflineGearType;
+        if (!string.IsNullOrEmpty(source.PublicGearName))
+        {
+            copy.PublicGearName = source.PublicGearName;
+        }
+    }
+
     private static GearIDRange Copy(GearIDRange source)
     {
         try
@@ -635,6 +860,7 @@ internal static class ScopeSight
             GearIDRange copy = new GearIDRange(source.GetPacketStruct());
             if (copy != null && copy.GetCompID(eGearComponent.Category) == source.GetCompID(eGearComponent.Category))
             {
+                CarryIdentity(source, copy);
                 return copy;
             }
         }
@@ -648,6 +874,7 @@ internal static class ScopeSight
             GearIDRange copy = new GearIDRange();
             if (copy.TryApplyCompJSON(source.ToJSON()))
             {
+                CarryIdentity(source, copy);
                 return copy;
             }
         }

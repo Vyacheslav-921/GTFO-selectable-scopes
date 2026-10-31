@@ -32,6 +32,12 @@ internal static class ScopeAlignment
     // Stored positive is forward, toward the muzzle. Sight local +Z points that way.
     private const float ForwardSign = 1f;
 
+    // Added to every weapon's default forward alignment for this sight.
+    private static readonly Dictionary<string, float> SightForwardShift = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase)
+    {
+        { "Sight_5", 0.1f }
+    };
+
     private static readonly Dictionary<string, string> Stems = new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static readonly Dictionary<string, string> SightsByStem = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -133,7 +139,7 @@ internal static class ScopeAlignment
             return false;
         }
 
-        BuiltIn(key.Weapon, out float scopeDefault, out float forwardDefault);
+        BuiltIn(key.Weapon, key.Sight, out float scopeDefault, out float forwardDefault);
         bool pending = Session.Remove(key);
         ReadSaved(key, out float scope, out float forward);
         if (!pending && Mathf.Abs(scope - scopeDefault) < 0.00001f && Mathf.Abs(forward - forwardDefault) < 0.00001f)
@@ -202,7 +208,7 @@ internal static class ScopeAlignment
 
     internal static void ApplyScope(GearPartHolder holder)
     {
-        if (!Plugin.Ready || holder == null || holder.SightPart == null || !IsLocalHolder(holder))
+        if (!Plugin.Ready || holder == null || holder.SightPart == null || IsIconCapture(holder) || !IsLocalHolder(holder))
         {
             return;
         }
@@ -561,6 +567,21 @@ internal static class ScopeAlignment
         }
     }
 
+    private static bool IsIconCapture(GearPartHolder holder)
+    {
+        GearIconRendering rendering = GearIconRendering.Current;
+        GearIconRendering.IconRenderJob job = rendering != null ? rendering.m_currentJob : null;
+        GameObject loaded = job != null ? job.loadedGearGO : null;
+        if (loaded == null)
+        {
+            return false;
+        }
+
+        Transform root = loaded.transform;
+        Transform current = holder.transform;
+        return current == root || current.IsChildOf(root);
+    }
+
     private static bool IsLocalHolder(GearPartHolder holder)
     {
         if (LocalCache.TryGetValue(holder.Pointer, out bool local))
@@ -756,7 +777,7 @@ internal static class ScopeAlignment
     {
         if (!Saved.TryGetValue(key, out Pair pair))
         {
-            BuiltIn(key.Weapon, out scope, out forward);
+            BuiltIn(key.Weapon, key.Sight, out scope, out forward);
             return;
         }
 
@@ -764,13 +785,17 @@ internal static class ScopeAlignment
         forward = Mathf.Clamp(pair.Forward.Value, -Max, Max);
     }
 
-    private static void BuiltIn(string weaponKey, out float scope, out float forward)
+    private static void BuiltIn(string weaponKey, string sightName, out float scope, out float forward)
     {
         if (weaponKey == null || !ScopeCatalog.TryAlignmentDefault(weaponKey, out scope, out forward))
         {
             scope = 0f;
             forward = 0f;
-            return;
+        }
+
+        if (sightName != null && SightForwardShift.TryGetValue(sightName, out float shift))
+        {
+            forward += shift;
         }
 
         scope = Snap(scope);
@@ -822,7 +847,7 @@ internal static class ScopeAlignment
         }
 
         string weapon = SlotName(key.Slot) + " weapon " + key.Weapon + ", sight " + key.Sight + ". Meters. Stored for this weapon and sight only.";
-        BuiltIn(key.Weapon, out float scopeDefault, out float forwardDefault);
+        BuiltIn(key.Weapon, key.Sight, out float scopeDefault, out float forwardDefault);
         Saved[key] = new Pair
         {
             Scope = Plugin.Instance.Config.Bind(Section, ConfigKey(key.Slot, key.Weapon, stem, 0), scopeDefault, weapon + " Positive moves up."),

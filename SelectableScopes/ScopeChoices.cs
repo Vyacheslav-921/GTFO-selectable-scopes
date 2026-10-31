@@ -69,6 +69,12 @@ internal static class ScopeChoices
             key,
             GearJsonEditor.DefaultSight,
             new ConfigDescription(description, acceptable));
+        if (ScopeCatalog.IsUnusableScope(entry.Value))
+        {
+            Plugin.LogSource.LogInfo("Lobby " + key + " was " + entry.Value + ". That scope is no longer in the menu, so the slot is back on Default.");
+            entry.Value = GearJsonEditor.DefaultSight;
+        }
+
         if (!string.IsNullOrEmpty(entry.Value)
             && !string.Equals(entry.Value, GearJsonEditor.DefaultSight, StringComparison.Ordinal)
             && (ScopeCatalog.Sights == null || !ScopeCatalog.Sights.ContainsKey(entry.Value)))

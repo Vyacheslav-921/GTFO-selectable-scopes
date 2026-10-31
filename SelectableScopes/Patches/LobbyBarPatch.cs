@@ -1,5 +1,6 @@
 using CellMenu;
 using HarmonyLib;
+using Player;
 
 namespace SelectableScopes.Patches;
 
@@ -28,5 +29,23 @@ internal static class LobbyBarSpawnPatch
     private static void Postfix(CM_PlayerLobbyBar __instance)
     {
         ScopeLoadoutCategory.ShowButton(__instance);
+        if (__instance != null && __instance.m_player != null && __instance.m_player.IsLocal)
+        {
+            ScopeSight.RequestWeaponIcons();
+        }
+    }
+}
+
+[HarmonyPatch(typeof(CM_PlayerLobbyBar), nameof(CM_PlayerLobbyBar.ShowWeaponSelectionPopup))]
+internal static class WeaponPopupPatch
+{
+    private static void Prefix(CM_PlayerLobbyBar __instance, InventorySlot slot)
+    {
+        if (__instance == null || __instance.m_player == null || !__instance.m_player.IsLocal)
+        {
+            return;
+        }
+
+        ScopeSight.RequestWeaponIcons(slot);
     }
 }

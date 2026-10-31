@@ -34,6 +34,7 @@ public sealed class Plugin : BasePlugin
         harmony.PatchAll(typeof(LobbyBarPatch));
         harmony.PatchAll(typeof(LobbyBarIntroPatch));
         harmony.PatchAll(typeof(LobbyBarSpawnPatch));
+        harmony.PatchAll(typeof(WeaponPopupPatch));
         harmony.PatchAll(typeof(GearSpawnPatch));
         harmony.PatchAll(typeof(ClipKeepPatch));
         harmony.PatchAll(typeof(ClipWieldPatch));
@@ -44,6 +45,9 @@ public sealed class Plugin : BasePlugin
         harmony.PatchAll(typeof(ScopeModelAlignPatch));
         harmony.PatchAll(typeof(ScopeModelSpawnPatch));
         harmony.PatchAll(typeof(ScopeModelForgetPatch));
+        harmony.PatchAll(typeof(ScopeCrosshairPreparePatch));
+        harmony.PatchAll(typeof(ScopeCrosshairKeepPatch));
+        harmony.PatchAll(typeof(ScopeCrosshairLayerPatch));
         EventAPI.OnAssetsLoaded += ScopeCatalog.BuildAndApply;
         Log.LogInfo("Selectable Scopes loaded. Weapon entries are written after game data loads.");
     }

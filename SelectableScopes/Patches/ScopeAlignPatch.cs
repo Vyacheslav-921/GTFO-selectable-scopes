@@ -13,6 +13,7 @@ internal static class ScopeModelAlignPatch
         try
         {
             ScopeSight.MaintainClips();
+            ScopeSight.MaintainIconRefresh();
             ScopeAlignment.ApplyScope(__instance);
         }
         catch (Exception ex)
