@@ -57,6 +57,8 @@ internal static class ScopeAlignment
 
     private static readonly Dictionary<IntPtr, bool> LocalCache = new Dictionary<IntPtr, bool>();
 
+    private static readonly Dictionary<IntPtr, HeldAlign> HeldAligns = new Dictionary<IntPtr, HeldAlign>();
+
     private static readonly Dictionary<string, Vector2> Logged = new Dictionary<string, Vector2>(StringComparer.Ordinal);
 
     private static bool Bound;
@@ -214,27 +216,34 @@ internal static class ScopeAlignment
         }
 
         Transform sight = holder.SightPart.transform;
-        if (!TryPlacement(holder, out float scope, out float forward, out InventorySlot slot, out string weaponKey, out string sightName))
+        try
         {
-            Transform reset = TrackedIronTarget(sight);
-            if (IsTracked(reset))
+            if (!TryPlacement(holder, out float scope, out float forward, out InventorySlot slot, out string weaponKey, out string sightName))
             {
-                ApplyLocal(reset, 0f, 0f);
+                Transform reset = TrackedIronTarget(sight);
+                if (IsTracked(reset))
+                {
+                    ApplyLocal(reset, 0f, 0f);
+                }
+
+                return;
             }
 
-            return;
-        }
+            Transform target = IronTarget(holder, sight, sightName);
+            float vertical = VisualSign * scope;
+            float depth = ForwardSign * forward;
+            if (Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(target))
+            {
+                return;
+            }
 
-        Transform target = IronTarget(holder, sight, sightName);
-        float vertical = VisualSign * scope;
-        float depth = ForwardSign * forward;
-        if (Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(target))
+            ApplyLocal(target, vertical, depth);
+            LogIfChanged(slot, weaponKey, sightName, scope, forward);
+        }
+        finally
         {
-            return;
+            RememberAlign(holder, sight);
         }
-
-        ApplyLocal(target, vertical, depth);
-        LogIfChanged(slot, weaponKey, sightName, scope, forward);
     }
 
     internal static void Forget(GearPartHolder holder)
@@ -245,17 +254,74 @@ internal static class ScopeAlignment
         }
 
         LocalCache.Remove(holder.Pointer);
+        long sightId = 0;
+        bool hasSight = false;
+        long carrierId = 0;
+        bool hasCarrier = false;
+        if (HeldAligns.TryGetValue(holder.Pointer, out HeldAlign held))
+        {
+            HeldAligns.Remove(holder.Pointer);
+            sightId = held.SightId;
+            hasSight = true;
+            carrierId = held.CarrierId;
+            hasCarrier = held.HasCarrier;
+        }
+
         if (holder.SightPart != null)
         {
             Transform sight = holder.SightPart.transform;
-            long id = sight.GetInstanceID();
-            ForgetTransform(sight);
-            if (FrontCarriers.TryGetValue(id, out Transform carrier))
+            if (sight != null)
             {
-                ForgetTransform(carrier);
-                FrontCarriers.Remove(id);
+                sightId = sight.GetInstanceID();
+                hasSight = true;
             }
         }
+
+        if (!hasSight)
+        {
+            return;
+        }
+
+        Places.Remove(sightId);
+        Transform carrier = null;
+        if (FrontCarriers.TryGetValue(sightId, out carrier))
+        {
+            FrontCarriers.Remove(sightId);
+        }
+
+        if (carrier != null)
+        {
+            Places.Remove(carrier.GetInstanceID());
+            if (carrier.parent == null)
+            {
+                UnityEngine.Object.Destroy(carrier.gameObject);
+            }
+        }
+        else if (hasCarrier)
+        {
+            Places.Remove(carrierId);
+        }
+    }
+
+    private static void RememberAlign(GearPartHolder holder, Transform sight)
+    {
+        if (holder == null || sight == null)
+        {
+            return;
+        }
+
+        long sightId = sight.GetInstanceID();
+        HeldAlign held = new HeldAlign
+        {
+            SightId = sightId
+        };
+        if (FrontCarriers.TryGetValue(sightId, out Transform carrier) && carrier != null)
+        {
+            held.CarrierId = carrier.GetInstanceID();
+            held.HasCarrier = true;
+        }
+
+        HeldAligns[holder.Pointer] = held;
     }
 
     private static Transform TrackedIronTarget(Transform sight)
@@ -1094,5 +1160,14 @@ internal static class ScopeAlignment
         public float Vertical;
 
         public float Depth;
+    }
+
+    private struct HeldAlign
+    {
+        public long SightId;
+
+        public long CarrierId;
+
+        public bool HasCarrier;
     }
 }

@@ -823,22 +823,35 @@ internal static class ScopeSight
         }
 
         string key = Identity(source) + "|" + sight.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (Prepared.TryGetValue(key, out GearIDRange cached) && cached != null)
+        if (!Prepared.TryGetValue(key, out GearIDRange template) || template == null)
         {
-            CarryIdentity(source, cached);
-            return cached;
+            template = Copy(source);
+            if (template == null)
+            {
+                return null;
+            }
+
+            template.SetCompID(eGearComponent.SightPart, sight, false);
+            ClearPlayfab(template);
+            Prepared[key] = template;
         }
 
-        GearIDRange copy = Copy(source);
-        if (copy == null)
+        GearIDRange returned = Copy(template);
+        if (returned == null)
         {
             return null;
         }
 
-        copy.SetCompID(eGearComponent.SightPart, sight, false);
-        CarryIdentity(source, copy);
-        Prepared[key] = copy;
-        return copy;
+        returned.SetCompID(eGearComponent.SightPart, sight, false);
+        CarryIdentity(source, returned);
+        return returned;
+    }
+
+    private static void ClearPlayfab(GearIDRange range)
+    {
+        range.PlayfabItemInstanceId = null;
+        range.PlayfabItemId = null;
+        range.PlayfabItemName = null;
     }
 
     private static void CarryIdentity(GearIDRange source, GearIDRange copy)
@@ -860,7 +873,6 @@ internal static class ScopeSight
             GearIDRange copy = new GearIDRange(source.GetPacketStruct());
             if (copy != null && copy.GetCompID(eGearComponent.Category) == source.GetCompID(eGearComponent.Category))
             {
-                CarryIdentity(source, copy);
                 return copy;
             }
         }
@@ -874,7 +886,6 @@ internal static class ScopeSight
             GearIDRange copy = new GearIDRange();
             if (copy.TryApplyCompJSON(source.ToJSON()))
             {
-                CarryIdentity(source, copy);
                 return copy;
             }
         }

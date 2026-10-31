@@ -34,6 +34,10 @@ internal static class ScopeLoadoutCategory
 
     private static readonly Dictionary<IntPtr, CM_LobbyScrollItem> Buttons = new Dictionary<IntPtr, CM_LobbyScrollItem>();
 
+    private static readonly Dictionary<IntPtr, CM_PlayerLobbyBar> ButtonBars = new Dictionary<IntPtr, CM_PlayerLobbyBar>();
+
+    private static int ReleasedFrame = -1;
+
     private static readonly List<GameObject> Cards = new List<GameObject>();
 
     private static readonly List<string> RowNames = new List<string>();
@@ -117,6 +121,7 @@ internal static class ScopeLoadoutCategory
 
         button.SetOnBtnPressCallback(DelegateSupport.ConvertDelegate<Il2CppSystem.Action<int>>((Action<int>)(_ => Open(bar))));
         Buttons[bar.Pointer] = button;
+        ButtonBars[bar.Pointer] = bar;
         return button;
     }
 
@@ -1259,10 +1264,58 @@ internal static class ScopeLoadoutCategory
         if (button == null)
         {
             Buttons.Remove(bar.Pointer);
+            ButtonBars.Remove(bar.Pointer);
             return null;
         }
 
         return button;
+    }
+
+    internal static void ReleaseDestroyed()
+    {
+        int frame = Time.frameCount;
+        if (frame == ReleasedFrame)
+        {
+            return;
+        }
+
+        ReleasedFrame = frame;
+        if (OpenBar == null)
+        {
+            OpenBar = null;
+            if (Cards.Count > 0)
+            {
+                DestroyCards();
+            }
+        }
+
+        List<IntPtr> drop = null;
+        foreach (KeyValuePair<IntPtr, CM_PlayerLobbyBar> pair in ButtonBars)
+        {
+            if (pair.Value != null)
+            {
+                continue;
+            }
+
+            if (Buttons.TryGetValue(pair.Key, out CM_LobbyScrollItem button) && button != null)
+            {
+                UnityEngine.Object.Destroy(button.gameObject);
+            }
+
+            drop ??= new List<IntPtr>();
+            drop.Add(pair.Key);
+        }
+
+        if (drop == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < drop.Count; i++)
+        {
+            Buttons.Remove(drop[i]);
+            ButtonBars.Remove(drop[i]);
+        }
     }
 
     internal static bool TryEditing(out InventorySlot slot)

@@ -36,6 +36,15 @@ internal static class LobbyBarSpawnPatch
     }
 }
 
+[HarmonyPatch(typeof(CM_PlayerLobbyBar), "Update")]
+internal static class LobbyBarLifetimePatch
+{
+    private static void Postfix()
+    {
+        ScopeLoadoutCategory.ReleaseDestroyed();
+    }
+}
+
 [HarmonyPatch(typeof(CM_PlayerLobbyBar), nameof(CM_PlayerLobbyBar.ShowWeaponSelectionPopup))]
 internal static class WeaponPopupPatch
 {

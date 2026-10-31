@@ -14,6 +14,7 @@ internal static class ScopeModelAlignPatch
         {
             ScopeSight.MaintainClips();
             ScopeSight.MaintainIconRefresh();
+            ScopeLoadoutCategory.ReleaseDestroyed();
             ScopeAlignment.ApplyScope(__instance);
         }
         catch (Exception ex)
