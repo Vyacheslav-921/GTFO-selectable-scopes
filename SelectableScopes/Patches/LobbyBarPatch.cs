@@ -1,6 +1,6 @@
 using CellMenu;
 using HarmonyLib;
-using Player;
+using SNetwork;
 
 namespace SelectableScopes.Patches;
 
@@ -42,19 +42,61 @@ internal static class LobbyBarLifetimePatch
     private static void Postfix()
     {
         ScopeLoadoutCategory.ReleaseDestroyed();
+        ScopeLoadoutCategory.AlignOpenSlot();
     }
 }
 
-[HarmonyPatch(typeof(CM_PlayerLobbyBar), nameof(CM_PlayerLobbyBar.ShowWeaponSelectionPopup))]
-internal static class WeaponPopupPatch
+[HarmonyPatch(typeof(FocusStateManager), nameof(FocusStateManager.ToggleMenu))]
+internal static class MenuTogglePatch
 {
-    private static void Prefix(CM_PlayerLobbyBar __instance, InventorySlot slot)
+    private static void Postfix()
     {
-        if (__instance == null || __instance.m_player == null || !__instance.m_player.IsLocal)
+        ScopeLoadoutCategory.NoteMenuFocus();
+    }
+}
+
+[HarmonyPatch(typeof(FocusStateManager), nameof(FocusStateManager.EnterMenu))]
+internal static class MenuEnterPatch
+{
+    private static void Postfix()
+    {
+        ScopeLoadoutCategory.NoteMenuFocus();
+    }
+}
+
+[HarmonyPatch(typeof(FocusStateManager), nameof(FocusStateManager.ExitMenu))]
+internal static class MenuExitPatch
+{
+    private static void Postfix()
+    {
+        ScopeLoadoutCategory.NoteMenuFocus();
+    }
+}
+
+[HarmonyPatch(typeof(CM_InventorySlotItem), nameof(CM_InventorySlotItem.PickWeapon))]
+internal static class WeaponPickedPatch
+{
+    private static void Postfix(CM_InventorySlotItem __instance, SNet_Player player)
+    {
+        if (!Plugin.Ready || __instance == null || __instance.m_gearID == null)
         {
             return;
         }
 
-        ScopeSight.RequestWeaponIcons(slot);
+        if (player != null && !player.IsLocal)
+        {
+            return;
+        }
+
+        if (player == null)
+        {
+            CM_PlayerLobbyBar bar = __instance.m_parentBar;
+            if (bar != null && bar.m_player != null && !bar.m_player.IsLocal)
+            {
+                return;
+            }
+        }
+
+        ScopeSight.RequestSelectedIcon(__instance.m_slot, __instance.m_gearID);
     }
 }

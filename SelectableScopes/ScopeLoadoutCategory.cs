@@ -48,6 +48,12 @@ internal static class ScopeLoadoutCategory
 
     private static InventorySlot OpenSlot;
 
+    private static eFocusState SeenFocus = eFocusState.None;
+
+    private static bool AlignOnShow;
+
+    private static int AlignFrames;
+
     internal static void EnsureButton(CM_PlayerLobbyBar bar)
     {
         if (bar == null || bar.m_clothesButton == null || bar.m_weaponsHeaderText == null)
@@ -367,6 +373,62 @@ internal static class ScopeLoadoutCategory
         {
             Plugin.LogSource.LogDebug("Wielded weapon: " + ex.Message);
             return false;
+        }
+    }
+
+    internal static void NoteMenuFocus()
+    {
+        FocusStateManager focus = FocusStateManager.Current;
+        if (focus == null)
+        {
+            return;
+        }
+
+        eFocusState state = FocusStateManager.CurrentState;
+        if (state == eFocusState.MainMenu && SeenFocus != eFocusState.MainMenu && GameStateManager.CurrentStateName == eGameStateName.InLevel)
+        {
+            AlignOnShow = true;
+            AlignFrames = 8;
+        }
+
+        SeenFocus = state;
+    }
+
+    internal static void AlignOpenSlot()
+    {
+        NoteMenuFocus();
+        if (!AlignOnShow || SeenFocus != eFocusState.MainMenu || GameStateManager.CurrentStateName != eGameStateName.InLevel)
+        {
+            return;
+        }
+
+        CM_PlayerLobbyBar bar = OpenBar;
+        CM_ScrollWindow window = bar != null ? bar.m_popupScrollWindow : null;
+        if (bar == null || window == null || !bar.m_popupVisible || !window.gameObject.activeInHierarchy)
+        {
+            AlignFrames--;
+            if (AlignFrames <= 0)
+            {
+                AlignOnShow = false;
+            }
+
+            return;
+        }
+
+        AlignOnShow = false;
+        if (!TryWieldedWeapon(out InventorySlot wielded) || wielded == OpenSlot)
+        {
+            return;
+        }
+
+        int key = wielded == InventorySlot.GearSpecial ? 1 : 0;
+        try
+        {
+            Draw(wielded, key, null);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Scope menu slot: " + ex.Message);
         }
     }
 

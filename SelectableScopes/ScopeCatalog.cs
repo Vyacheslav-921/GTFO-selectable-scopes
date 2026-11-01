@@ -30,9 +30,10 @@ internal static class ScopeCatalog
     // Every sight on these weapons starts here until that sight is saved. Vertical stays 0 when it is omitted.
     private static readonly Dictionary<string, AlignmentDefault> AlignmentPresets = new Dictionary<string, AlignmentDefault>(StringComparer.OrdinalIgnoreCase)
     {
-        { "HighCalPistol", new AlignmentDefault { Vertical = -0.02f, Forward = -0.05f } }, // Shelling Arid 5
+        { "HighCalPistol", new AlignmentDefault { Vertical = -0.035f, Forward = -0.085f } }, // Shelling Arid 5
         { "PistolSemi", new AlignmentDefault { Vertical = -0.035f, Forward = -0.07f } }, // Shelling S49
         { "PistolBurst", new AlignmentDefault { Vertical = -0.02f, Forward = -0.072f } }, // Shelling Nano
+        { "PistolAuto", new AlignmentDefault { Vertical = 0.005f, Forward = 0.048f } }, // Shelling Nano
         { "Autopistol staggering", new AlignmentDefault { Vertical = 0f, Forward = -0.045f } }, // Raptus Steigro, HEL autopistol
         { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
         { "BullpupAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.02f } }, // Accrat Golok DA
@@ -47,7 +48,7 @@ internal static class ScopeCatalog
         { "DMRBurst", new AlignmentDefault { Vertical = 0f, Forward = -0.05f } }, // Hanaway PSB
         { "HELRifleSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.1f } }, // Omneco LRG
         { "MachinegunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Techman Veruta XII
-        { "ShotgunShort", new AlignmentDefault { Vertical = 0.02f, Forward = 0f } } // Buckland SBS III
+        { "ShotgunShort", new AlignmentDefault { Vertical = 0f, Forward = 0.035f } } // Buckland SBS III
     };
 
     private static readonly HashSet<string> ExcludedSignatures = new HashSet<string>(StringComparer.Ordinal);

@@ -34,8 +34,11 @@ public sealed class Plugin : BasePlugin
         harmony.PatchAll(typeof(LobbyBarPatch));
         harmony.PatchAll(typeof(LobbyBarIntroPatch));
         harmony.PatchAll(typeof(LobbyBarSpawnPatch));
-        harmony.PatchAll(typeof(WeaponPopupPatch));
+        harmony.PatchAll(typeof(WeaponPickedPatch));
         harmony.PatchAll(typeof(LobbyBarLifetimePatch));
+        harmony.PatchAll(typeof(MenuTogglePatch));
+        harmony.PatchAll(typeof(MenuEnterPatch));
+        harmony.PatchAll(typeof(MenuExitPatch));
         harmony.PatchAll(typeof(GearSpawnPatch));
         harmony.PatchAll(typeof(ClipKeepPatch));
         harmony.PatchAll(typeof(ClipWieldPatch));

@@ -56,18 +56,67 @@ internal static class ScopeSight
 
     internal static GearIDRange IconRange(CM_InventorySlotItem item, GearIDRange source)
     {
-        if (item == null || source == null || !IsWeaponSlot(item.m_slot) || !IsLocal(item))
+        if (item == null || source == null || item.m_isWeaponPicker || !IsWeaponSlot(item.m_slot) || !IsLocal(item))
         {
             return null;
         }
 
-        return SightForIcon(item.m_slot, source);
+        if (!ShowsEquippedWeapon(item, source))
+        {
+            return null;
+        }
+
+        GearIDRange display = SightForIcon(item.m_slot, source);
+        if (display == null)
+        {
+            return null;
+        }
+
+        uint checksum;
+        try
+        {
+            checksum = display.GetChecksum();
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon icon id: " + ex.Message);
+            return null;
+        }
+
+        if (!HasIcon(checksum))
+        {
+            if (PostOne(item.m_slot, source) > 0)
+            {
+                NoteIconWork(1);
+            }
+
+            return null;
+        }
+
+        return display;
     }
 
     internal static void RequestWeaponIcons()
     {
-        RequestWeaponIcons(InventorySlot.GearStandard);
-        RequestWeaponIcons(InventorySlot.GearSpecial);
+        int standard = QueueEquippedIcon(InventorySlot.GearStandard);
+        int special = QueueEquippedIcon(InventorySlot.GearSpecial);
+        bool missing = standard < 0 || special < 0;
+        int posted = (standard > 0 ? standard : 0) + (special > 0 ? special : 0);
+        if (!missing)
+        {
+            IconRetries = 0;
+            IconsRetry = false;
+        }
+
+        if (missing)
+        {
+            NoteIconWork(-1);
+        }
+
+        if (posted > 0 || !missing)
+        {
+            NoteIconWork(posted);
+        }
     }
 
     internal static void RequestWeaponIcons(InventorySlot slot)
@@ -77,7 +126,38 @@ internal static class ScopeSight
             return;
         }
 
-        int posted = PostMissingIcons(slot);
+        int posted = QueueEquippedIcon(slot);
+        if (posted >= 0)
+        {
+            IconRetries = 0;
+            IconsRetry = false;
+        }
+
+        NoteIconWork(posted);
+    }
+
+    private static int QueueEquippedIcon(InventorySlot slot)
+    {
+        if (!Plugin.Ready || !IsWeaponSlot(slot))
+        {
+            return 0;
+        }
+
+        return PostEquippedIcon(slot);
+    }
+
+    internal static void RequestSelectedIcon(InventorySlot slot, GearIDRange source)
+    {
+        if (!Plugin.Ready || source == null || !IsWeaponSlot(slot))
+        {
+            return;
+        }
+
+        NoteIconWork(PostOne(slot, source));
+    }
+
+    private static void NoteIconWork(int posted)
+    {
         if (posted < 0)
         {
             IconRetries++;
@@ -91,17 +171,21 @@ internal static class ScopeSight
             return;
         }
 
-        IconRetries = 0;
-
         if (posted > 0)
         {
             IconsAwaitJob = true;
             IconSawJob = false;
-            Plugin.LogSource.LogInfo("Rendering " + posted + " weapon icon" + (posted == 1 ? "" : "s") + " for the current sight.");
+            IconsPending = true;
+            IconWait = 0;
+            Plugin.LogSource.LogInfo("Rendering the equipped weapon icon for the current sight.");
+            return;
         }
 
-        IconsPending = true;
-        IconWait = 0;
+        if (!IconsPending)
+        {
+            IconsPending = true;
+            IconWait = 0;
+        }
     }
 
     internal static void MaintainIconRefresh()
@@ -656,12 +740,14 @@ internal static class ScopeSight
         return WithSight(slot, source);
     }
 
-    private static int PostMissingIcons(InventorySlot slot)
+    private static int PostEquippedIcon(InventorySlot slot)
     {
-        Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<GearIDRange> gears;
+        bool found = false;
+        GearIDRange source = null;
+        Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppArrayBase<CM_InventorySlotItem> items;
         try
         {
-            gears = GearManager.GetAllGearForSlot(slot);
+            items = UnityEngine.Object.FindObjectsOfType<CM_InventorySlotItem>();
         }
         catch (Exception ex)
         {
@@ -669,55 +755,75 @@ internal static class ScopeSight
             return -1;
         }
 
-        if (gears == null || gears.Count == 0)
+        if (items == null)
         {
             return -1;
         }
 
-        int posted = 0;
-        for (int i = 0; i < gears.Count; i++)
+        for (int i = 0; i < items.Count; i++)
         {
-            GearIDRange source = gears[i];
-            if (source == null)
+            CM_InventorySlotItem item = items[i];
+            if (item == null || item.m_isWeaponPicker || item.m_slot != slot || !IsLocal(item))
             {
                 continue;
             }
 
-            GearIDRange display = SightForIcon(slot, source) ?? source;
-            uint checksum;
-            try
+            found = true;
+            if (item.m_gearID != null)
             {
-                checksum = display.GetChecksum();
-            }
-            catch (Exception ex)
-            {
-                Plugin.LogSource.LogDebug("Weapon icon id: " + ex.Message);
-                continue;
-            }
-
-            if (!PostedIcons.Add(checksum))
-            {
-                continue;
-            }
-
-            if (HasIcon(checksum) && display == source)
-            {
-                continue;
-            }
-
-            try
-            {
-                GearManager.PostIconJobs(display);
-                posted++;
-            }
-            catch (Exception ex)
-            {
-                PostedIcons.Remove(checksum);
-                Plugin.LogSource.LogDebug("Weapon icon job: " + ex.Message);
+                source = item.m_gearID;
+                break;
             }
         }
 
-        return posted;
+        if (!found)
+        {
+            return -1;
+        }
+
+        if (source == null)
+        {
+            return 0;
+        }
+
+        return PostOne(slot, source);
+    }
+
+    private static int PostOne(InventorySlot slot, GearIDRange source)
+    {
+        GearIDRange display = SightForIcon(slot, source);
+        if (display == null)
+        {
+            return 0;
+        }
+
+        uint checksum;
+        try
+        {
+            checksum = display.GetChecksum();
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Weapon icon id: " + ex.Message);
+            return 0;
+        }
+
+        if (HasIcon(checksum) || !PostedIcons.Add(checksum))
+        {
+            return 0;
+        }
+
+        try
+        {
+            GearManager.PostIconJobs(display);
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            PostedIcons.Remove(checksum);
+            Plugin.LogSource.LogDebug("Weapon icon job: " + ex.Message);
+            return 0;
+        }
     }
 
     private static bool HasIcon(uint checksum)
@@ -785,7 +891,7 @@ internal static class ScopeSight
         for (int i = 0; i < items.Count; i++)
         {
             CM_InventorySlotItem item = items[i];
-            if (item == null || item.m_slot != slot || item.m_gearID == null || !IsLocal(item))
+            if (item == null || item.m_isWeaponPicker || item.m_slot != slot || item.m_gearID == null || !IsLocal(item))
             {
                 continue;
             }
@@ -801,6 +907,26 @@ internal static class ScopeSight
             {
                 Plugin.LogSource.LogDebug("Scope icon: " + ex.Message);
             }
+        }
+    }
+
+    private static bool ShowsEquippedWeapon(CM_InventorySlotItem item, GearIDRange source)
+    {
+        try
+        {
+            BackpackItem equipped = PlayerBackpackManager.GetLocalItem(item.m_slot);
+            GearIDRange current = equipped != null ? equipped.GearIDRange : null;
+            if (current == null)
+            {
+                return true;
+            }
+
+            return string.Equals(Identity(source), Identity(current), StringComparison.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            Plugin.LogSource.LogDebug("Equipped icon: " + ex.Message);
+            return false;
         }
     }
 
