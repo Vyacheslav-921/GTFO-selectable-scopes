@@ -28,6 +28,14 @@ internal static class ScopeCatalog
     private static readonly Dictionary<string, AlignmentDefault> AlignmentDefaults = new Dictionary<string, AlignmentDefault>(StringComparer.Ordinal);
 
     // Every sight on these weapons starts here until that sight is saved. Vertical stays 0 when it is omitted.
+    private static readonly HashSet<string> BarrelDatablocks = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "RevolverHEL",
+        "RevolverSemi"
+    };
+
+    private static readonly HashSet<string> BarrelKeys = new HashSet<string>(StringComparer.Ordinal);
+
     private static readonly Dictionary<string, AlignmentDefault> AlignmentPresets = new Dictionary<string, AlignmentDefault>(StringComparer.OrdinalIgnoreCase)
     {
         { "HighCalPistol", new AlignmentDefault { Vertical = -0.035f, Forward = -0.085f } }, // Shelling Arid 5
@@ -301,6 +309,15 @@ internal static class ScopeCatalog
         }
 
         RememberAlignmentDefault(weaponKey, block.name, display);
+        if (block.name != null && BarrelDatablocks.Contains(block.name))
+        {
+            BarrelKeys.Add(weaponKey);
+        }
+    }
+
+    internal static bool FollowsBarrel(string weaponKey)
+    {
+        return weaponKey != null && BarrelKeys.Contains(weaponKey);
     }
 
     private static void RememberAlignmentDefault(string weaponKey, string datablockName, string display)

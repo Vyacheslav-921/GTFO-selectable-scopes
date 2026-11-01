@@ -50,6 +50,13 @@ internal static class ScopeAlignment
 
     private static readonly Dictionary<long, PlaceState> Places = new Dictionary<long, PlaceState>();
 
+    // Learned from a real reload, keyed by the weapon id (47, 15), not the datablock name.
+    private static readonly Dictionary<string, string> BarrelPaths = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly Dictionary<long, ReloadWatch> Watches = new Dictionary<long, ReloadWatch>();
+
+    private static readonly HashSet<string> BarrelLogged = new HashSet<string>(StringComparer.Ordinal);
+
     // Front irons are a bare mesh. The rear half owns Sight_Align, and the two were never parented together.
     private static readonly Dictionary<long, Transform> FrontCarriers = new Dictionary<long, Transform>();
 
@@ -232,13 +239,17 @@ internal static class ScopeAlignment
             Transform target = IronTarget(holder, sight, sightName);
             float vertical = VisualSign * scope;
             float depth = ForwardSign * forward;
-            if (Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(target))
+            bool idle = Mathf.Abs(vertical) < 0.0000001f && Mathf.Abs(depth) < 0.0000001f && !IsTracked(target);
+            if (!idle)
             {
-                return;
+                ApplyLocal(target, vertical, depth);
+                LogIfChanged(slot, weaponKey, sightName, scope, forward);
             }
 
-            ApplyLocal(target, vertical, depth);
-            LogIfChanged(slot, weaponKey, sightName, scope, forward);
+            if (ScopeCatalog.FollowsBarrel(weaponKey))
+            {
+                FollowBarrel(holder, target, weaponKey);
+            }
         }
         finally
         {
@@ -253,6 +264,7 @@ internal static class ScopeAlignment
             return;
         }
 
+        DropBarrel(holder);
         LocalCache.Remove(holder.Pointer);
         long sightId = 0;
         bool hasSight = false;
@@ -631,6 +643,419 @@ internal static class ScopeAlignment
         {
             Places.Remove(target.GetInstanceID());
         }
+    }
+
+    private const int BarrelNodeCap = 512;
+
+    private const float BarrelMoveThreshold = 1.5f;
+
+    private static void FollowBarrel(GearPartHolder holder, Transform target, string weaponKey)
+    {
+        if (holder == null || target == null || string.IsNullOrEmpty(weaponKey))
+        {
+            return;
+        }
+
+        Transform root = holder.transform;
+        if (root == null)
+        {
+            return;
+        }
+
+        if (BarrelPaths.TryGetValue(weaponKey, out string path))
+        {
+            Transform known = Walk(root, path);
+            if (known != null && known != target && !known.IsChildOf(target))
+            {
+                ItemEquippable armed = holder.GetComponentInParent<ItemEquippable>();
+                if (target.parent == known || armed == null || !armed.IsReloading)
+                {
+                    Adopt(target, known, null);
+                }
+            }
+
+            return;
+        }
+
+        long id = root.GetInstanceID();
+        ItemEquippable item = holder.GetComponentInParent<ItemEquippable>();
+        bool reloading = item != null && item.IsReloading;
+        if (!Watches.TryGetValue(id, out ReloadWatch watch))
+        {
+            watch = new ReloadWatch();
+            Watches[id] = watch;
+        }
+
+        if (!reloading)
+        {
+            if (watch.SawReload && BarrelLogged.Add(weaponKey))
+            {
+                Plugin.LogSource.LogInfo(ScopeCatalog.WeaponTitleFor(weaponKey, null) + " reload did not move a separate barrel bone. Largest change was " + watch.BestName + " at " + watch.BestScore.ToString("0.0", CultureInfo.InvariantCulture) + ". " + DescribeFront(holder));
+            }
+
+            Capture(root, target, watch);
+            watch.SawReload = false;
+            watch.BestScore = 0f;
+            watch.BestName = "none";
+            return;
+        }
+
+        if (watch.Nodes.Count == 0)
+        {
+            Capture(root, target, watch);
+            watch.SawReload = true;
+            return;
+        }
+
+        watch.SawReload = true;
+        Transform bone = Pick(watch, target, holder.m_aMuzzle);
+        if (bone == null || bone == target || bone == root || bone.IsChildOf(target))
+        {
+            return;
+        }
+
+        string learned = PathFrom(bone, root);
+        if (string.IsNullOrEmpty(learned))
+        {
+            return;
+        }
+
+        BarrelPaths[weaponKey] = learned;
+        Adopt(target, bone, watch);
+        if (BarrelLogged.Add(weaponKey))
+        {
+            Plugin.LogSource.LogInfo(ScopeCatalog.WeaponTitleFor(weaponKey, null) + " sight follows " + learned + " during reload.");
+        }
+    }
+
+    private static void DropBarrel(GearPartHolder holder)
+    {
+        if (holder != null)
+        {
+            Watches.Remove(holder.transform.GetInstanceID());
+        }
+    }
+
+    private static void Adopt(Transform target, Transform bone, ReloadWatch watch)
+    {
+        if (target.parent == bone)
+        {
+            return;
+        }
+
+        long id = target.GetInstanceID();
+        bool tracked = Places.TryGetValue(id, out PlaceState state);
+        target.SetParent(bone, true);
+        if (watch != null)
+        {
+            int index = watch.Nodes.IndexOf(bone);
+            if (index >= 0)
+            {
+                Quaternion rest = watch.WorldRotations[index];
+                target.localRotation = Quaternion.Inverse(rest) * watch.SightRotation;
+                target.localPosition = Quaternion.Inverse(rest) * (watch.SightPosition - watch.WorldPositions[index]);
+            }
+        }
+
+        Places[id] = new PlaceState
+        {
+            Written = target.localPosition,
+            Vertical = tracked ? state.Vertical : 0f,
+            Depth = tracked ? state.Depth : 0f
+        };
+    }
+
+    private static void Capture(Transform root, Transform sight, ReloadWatch watch)
+    {
+        watch.SightPosition = sight.position;
+        watch.SightRotation = sight.rotation;
+        watch.Nodes.Clear();
+        watch.LocalPositions.Clear();
+        watch.LocalRotations.Clear();
+        watch.WorldPositions.Clear();
+        watch.WorldRotations.Clear();
+        AddNodes(root, sight, watch);
+    }
+
+    private static void AddNodes(Transform node, Transform sight, ReloadWatch watch)
+    {
+        if (node == null || watch.Nodes.Count >= BarrelNodeCap || node == sight || node.IsChildOf(sight))
+        {
+            return;
+        }
+
+        watch.Nodes.Add(node);
+        watch.LocalPositions.Add(node.localPosition);
+        watch.LocalRotations.Add(node.localRotation);
+        watch.WorldPositions.Add(node.position);
+        watch.WorldRotations.Add(node.rotation);
+        for (int i = 0; i < node.childCount; i++)
+        {
+            AddNodes(node.GetChild(i), sight, watch);
+        }
+    }
+
+    private static Transform Pick(ReloadWatch watch, Transform sight, Transform muzzle)
+    {
+        Transform chainBone = null;
+        float chainScore = 0f;
+        bool barrelInRig = false;
+        Transform named = null;
+        float namedScore = 0f;
+        int namedDepth = int.MaxValue;
+        Transform other = null;
+        float otherScore = 0f;
+        Transform root = watch.Nodes.Count > 0 ? watch.Nodes[0] : null;
+        bool muzzleHere = muzzle != null && root != null && (muzzle == root || muzzle.IsChildOf(root));
+        for (int i = 0; i < watch.Nodes.Count; i++)
+        {
+            Transform node = watch.Nodes[i];
+            if (node == null || node == root || node == sight || node.IsChildOf(sight))
+            {
+                continue;
+            }
+
+            float angle = Quaternion.Angle(watch.LocalRotations[i], node.localRotation);
+            float move = (node.localPosition - watch.LocalPositions[i]).magnitude * 200f;
+            float score = angle + move;
+            if (score > watch.BestScore)
+            {
+                watch.BestScore = score;
+                watch.BestName = PathFrom(node, root);
+            }
+
+            if (IsBarrelName(node.name))
+            {
+                barrelInRig = true;
+                if (score >= BarrelMoveThreshold)
+                {
+                    int depth = DepthUnder(node, root);
+                    if (score > namedScore + 0.01f || (Mathf.Abs(score - namedScore) <= 0.01f && depth < namedDepth))
+                    {
+                        named = node;
+                        namedScore = score;
+                        namedDepth = depth;
+                    }
+                }
+
+                continue;
+            }
+
+            if (score < BarrelMoveThreshold || IsIgnoredMover(node.name))
+            {
+                continue;
+            }
+
+            if (muzzleHere && (node == muzzle || muzzle.IsChildOf(node)))
+            {
+                if (score > chainScore)
+                {
+                    chainBone = node;
+                    chainScore = score;
+                }
+
+                continue;
+            }
+
+            if (score > otherScore)
+            {
+                other = node;
+                otherScore = score;
+            }
+        }
+
+        if (named != null)
+        {
+            return named;
+        }
+
+        // The speedloader leaves before the barrel breaks open. Wait for the barrel bone.
+        if (barrelInRig)
+        {
+            return null;
+        }
+
+        Transform winner = other;
+        float winnerScore = otherScore;
+        if (chainBone != null && chainScore > winnerScore)
+        {
+            winner = chainBone;
+            winnerScore = chainScore;
+        }
+
+        return winner;
+    }
+
+    private static Transform Walk(Transform root, string path)
+    {
+        if (root == null || string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        string[] parts = path.Split('/');
+        Transform current = root;
+        for (int i = 0; i < parts.Length; i++)
+        {
+            Transform next = null;
+            for (int child = 0; child < current.childCount; child++)
+            {
+                Transform candidate = current.GetChild(child);
+                if (string.Equals(candidate.name, parts[i], StringComparison.Ordinal))
+                {
+                    next = candidate;
+                    break;
+                }
+            }
+
+            if (next == null)
+            {
+                return null;
+            }
+
+            current = next;
+        }
+
+        return current;
+    }
+
+    private static string PathFrom(Transform node, Transform root)
+    {
+        if (node == null || node == root)
+        {
+            return null;
+        }
+
+        List<string> names = new List<string>();
+        Transform current = node;
+        int guard = 0;
+        while (current != null && current != root && guard++ < 32)
+        {
+            names.Add(current.name);
+            current = current.parent;
+        }
+
+        if (current != root)
+        {
+            return null;
+        }
+
+        names.Reverse();
+        return string.Join("/", names);
+    }
+
+    private static int DepthUnder(Transform node, Transform root)
+    {
+        int depth = 0;
+        Transform current = node;
+        while (current != null && current != root && depth < 32)
+        {
+            depth++;
+            current = current.parent;
+        }
+
+        return depth;
+    }
+
+    private static string DescribeFront(GearPartHolder holder)
+    {
+        Transform front = holder.FrontPart != null ? holder.FrontPart.transform : null;
+        if (front == null)
+        {
+            return "No front part.";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        builder.Append(front.name).Append(" children:");
+        int limit = Math.Min(front.childCount, 12);
+        for (int i = 0; i < limit; i++)
+        {
+            builder.Append(' ').Append(front.GetChild(i).name);
+        }
+
+        Animator animator = holder.FrontPartAnimator;
+        if (animator != null && animator.runtimeAnimatorController != null && animator.runtimeAnimatorController.animationClips != null)
+        {
+            builder.Append(". Clips:");
+            AnimationClip[] clips = animator.runtimeAnimatorController.animationClips;
+            int shown = 0;
+            for (int i = 0; i < clips.Length && shown < 6; i++)
+            {
+                if (clips[i] == null)
+                {
+                    continue;
+                }
+
+                builder.Append(' ').Append(clips[i].name);
+                shown++;
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool IsBarrelName(string name)
+    {
+        // Revolvers call the barrel a_Fold / a_RevolverFold. Sight_Align and the muzzle are its children.
+        if (string.IsNullOrEmpty(name) || name.IndexOf("align", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return false;
+        }
+
+        return ContainsToken(name, "barrel") || ContainsToken(name, "fold");
+    }
+
+    private static bool IsIgnoredMover(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return true;
+        }
+
+        return ContainsToken(name, "cylinder")
+            || ContainsToken(name, "drum")
+            || ContainsToken(name, "hammer")
+            || ContainsToken(name, "trigger")
+            || ContainsToken(name, "bullet")
+            || ContainsToken(name, "shell")
+            || ContainsToken(name, "casing")
+            || ContainsToken(name, "cartridge")
+            || ContainsToken(name, "mag")
+            || ContainsToken(name, "speedloader")
+            || ContainsToken(name, "ejector")
+            || ContainsToken(name, "sight")
+            || ContainsToken(name, "align")
+            || ContainsToken(name, "hand")
+            || ContainsToken(name, "flash")
+            || string.Equals(name, CarrierName, StringComparison.Ordinal);
+    }
+
+    private static bool ContainsToken(string name, string token)
+    {
+        return name.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private sealed class ReloadWatch
+    {
+        public bool SawReload;
+
+        public float BestScore;
+
+        public string BestName = "none";
+
+        public Vector3 SightPosition;
+
+        public Quaternion SightRotation;
+
+        public readonly List<Transform> Nodes = new List<Transform>();
+
+        public readonly List<Vector3> LocalPositions = new List<Vector3>();
+
+        public readonly List<Quaternion> LocalRotations = new List<Quaternion>();
+
+        public readonly List<Vector3> WorldPositions = new List<Vector3>();
+
+        public readonly List<Quaternion> WorldRotations = new List<Quaternion>();
     }
 
     private static bool IsIconCapture(GearPartHolder holder)
