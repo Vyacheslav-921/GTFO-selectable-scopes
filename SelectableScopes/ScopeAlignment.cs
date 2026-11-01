@@ -715,11 +715,6 @@ internal static class ScopeAlignment
 
         if (range != null)
         {
-            if (!ScopeCatalog.AppliesTo(range))
-            {
-                return false;
-            }
-
             weaponKey = ScopeCatalog.WeaponKeyFor(range);
             if (weaponKey != null && TrySlot(weaponKey, sightName, out slot))
             {
@@ -777,11 +772,6 @@ internal static class ScopeAlignment
         BackpackItem item = PlayerBackpackManager.GetLocalItem(slot);
         range = item != null ? item.GearIDRange : null;
         if (range == null)
-        {
-            return false;
-        }
-
-        if (!ScopeCatalog.AppliesTo(range))
         {
             return false;
         }

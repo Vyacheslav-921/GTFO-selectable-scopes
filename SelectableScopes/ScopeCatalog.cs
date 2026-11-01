@@ -33,8 +33,10 @@ internal static class ScopeCatalog
         { "HighCalPistol", new AlignmentDefault { Vertical = -0.035f, Forward = -0.085f } }, // Shelling Arid 5
         { "PistolSemi", new AlignmentDefault { Vertical = -0.035f, Forward = -0.07f } }, // Shelling S49
         { "PistolBurst", new AlignmentDefault { Vertical = -0.02f, Forward = -0.072f } }, // Shelling Nano
-        { "PistolAuto", new AlignmentDefault { Vertical = 0.005f, Forward = 0.048f } }, // Shelling Nano
+        { "PistolAuto", new AlignmentDefault { Vertical = 0.005f, Forward = 0.048f } }, // Raptus Treffen 2
         { "Autopistol staggering", new AlignmentDefault { Vertical = 0f, Forward = -0.045f } }, // Raptus Steigro, HEL autopistol
+        { "RevolverHEL", new AlignmentDefault { Vertical = -0.05f, Forward = 0.065f } }, // ?
+        { "RevolverSemi", new AlignmentDefault { Vertical = -0.05f, Forward = 0.16f } }, // Mastaba R66
         { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
         { "BullpupAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.02f } }, // Accrat Golok DA
         { "ShotgunAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.01f } }, // Buckland AF6
@@ -50,8 +52,6 @@ internal static class ScopeCatalog
         { "MachinegunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Techman Veruta XII
         { "ShotgunShort", new AlignmentDefault { Vertical = 0f, Forward = 0.035f } } // Buckland SBS III
     };
-
-    private static readonly HashSet<string> ExcludedSignatures = new HashSet<string>(StringComparer.Ordinal);
 
     private static readonly HashSet<string> HiddenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -129,22 +129,13 @@ internal static class ScopeCatalog
         AcceptableValueList<string> acceptable = new AcceptableValueList<string>(SightNames);
         ScopeChoices.Bind(acceptable);
         Weapons = new Dictionary<uint, ConfigEntry<string>>();
-        ExcludedSignatures.Clear();
         HashSet<string> usedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "General", "Lobby", "Alignment" };
         Dictionary<string, string> existing = ReadExistingSights();
         int configured = 0;
-        List<string> revolvers = new List<string>();
         foreach (PlayerOfflineGearDataBlock block in gear)
         {
             if (block == null || string.IsNullOrEmpty(block.GearJSON) || Weapons.ContainsKey(block.persistentID))
             {
-                continue;
-            }
-
-            if (IsRevolver(block.name))
-            {
-                RememberRevolver(block);
-                revolvers.Add(string.IsNullOrWhiteSpace(block.name) ? block.persistentID.ToString(CultureInfo.InvariantCulture) : block.name);
                 continue;
             }
 
@@ -175,14 +166,8 @@ internal static class ScopeCatalog
         }
 
         ScopeAlignment.Bind(SightNames);
-        DropRevolverSettings(revolvers);
         Plugin.Instance.Config.Save();
         Plugin.LogSource.LogInfo("Selectable Scopes catalog: " + Sights.Count + " sights, " + configured + " weapons.");
-        if (revolvers.Count > 0)
-        {
-            revolvers.Sort(StringComparer.OrdinalIgnoreCase);
-            Plugin.LogSource.LogInfo("Left " + string.Join(", ", revolvers) + " on the default sight.");
-        }
         if (skippedFrontIrons > 0)
         {
             Plugin.LogSource.LogInfo("Left out " + skippedFrontIrons + " front iron sights. The rear sight is the one that aims.");
@@ -469,68 +454,6 @@ internal static class ScopeCatalog
         }
 
         return builder.ToString();
-    }
-
-    internal static bool AppliesTo(GearIDRange range)
-    {
-        if (range == null || ExcludedSignatures.Count == 0)
-        {
-            return range != null;
-        }
-
-        string signature;
-        try
-        {
-            signature = Signature(range);
-        }
-        catch (Exception ex)
-        {
-            Plugin.LogSource.LogDebug("Weapon signature: " + ex.Message);
-            return true;
-        }
-
-        return signature == null || !ExcludedSignatures.Contains(signature);
-    }
-
-    private static void RememberRevolver(PlayerOfflineGearDataBlock block)
-    {
-        string signature = GearJsonEditor.ComponentSignature(block.GearJSON);
-        if (signature == null)
-        {
-            Plugin.LogSource.LogWarning("Could not identify " + block.name + ". Sight selection was not blocked for it.");
-            return;
-        }
-
-        ExcludedSignatures.Add(signature);
-    }
-
-    private static void DropRevolverSettings(List<string> revolvers)
-    {
-        if (revolvers.Count == 0)
-        {
-            return;
-        }
-
-        bool save = Plugin.Instance.Config.SaveOnConfigSet;
-        Plugin.Instance.Config.SaveOnConfigSet = false;
-        try
-        {
-            for (int i = 0; i < revolvers.Count; i++)
-            {
-                ConfigDefinition definition = new ConfigDefinition(revolvers[i], "Sight");
-                Plugin.Instance.Config.Bind(definition, GearJsonEditor.DefaultSight);
-                Plugin.Instance.Config.Remove(definition);
-            }
-        }
-        finally
-        {
-            Plugin.Instance.Config.SaveOnConfigSet = save;
-        }
-    }
-
-    private static bool IsRevolver(string name)
-    {
-        return !string.IsNullOrEmpty(name) && name.IndexOf("Revolver", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static bool ShouldConfigure(string gearJson)

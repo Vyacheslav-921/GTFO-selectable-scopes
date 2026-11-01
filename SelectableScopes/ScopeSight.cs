@@ -37,7 +37,7 @@ internal static class ScopeSight
 
     internal static GearIDRange WithSight(InventorySlot slot, GearIDRange source)
     {
-        if (!Plugin.Ready || source == null || !IsWeaponSlot(slot) || !ScopeCatalog.AppliesTo(source))
+        if (!Plugin.Ready || source == null || !IsWeaponSlot(slot))
         {
             return null;
         }
@@ -228,13 +228,6 @@ internal static class ScopeSight
 
     internal static void ApplySelection(InventorySlot slot)
     {
-        BackpackItem equipped = PlayerBackpackManager.GetLocalItem(slot);
-        if (equipped != null && equipped.GearIDRange != null && !ScopeCatalog.AppliesTo(equipped.GearIDRange))
-        {
-            Plugin.LogSource.LogInfo("Left the revolver on its default sight.");
-            return;
-        }
-
         RememberClip(slot);
         if (GameStateManager.CurrentStateName != eGameStateName.InLevel)
         {
