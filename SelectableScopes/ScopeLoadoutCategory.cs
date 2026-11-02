@@ -811,6 +811,10 @@ internal static class ScopeLoadoutCategory
 
         card.ForcePopupLayer(true, null);
         card.transform.localScale = Vector3.one;
+        if (!TryAdjust(sightName, out _, out _) && !TryCommit(sightName, out _))
+        {
+            card.PosYStartEnd = new Vector2(0f, 72f);
+        }
         RemoveLocalizers(cardObject);
         card.m_useInfoPopup = false;
         card.m_useHover = true;
@@ -853,8 +857,8 @@ internal static class ScopeLoadoutCategory
             background.gameObject.SetActive(selected);
         }
 
-        StampRow(card, ScopeCatalog.Title(sightName), selected, null);
-        FitCardHitbox(card);
+        StampRow(card, ScopeCatalog.MenuLabel(sightName), selected, null, ScopeCatalog.Detail(sightName));
+        FitCardHitbox(card, 72f);
         string capturedName = sightName;
         InventorySlot capturedSlot = slot;
         int capturedKey = key;
@@ -874,24 +878,58 @@ internal static class ScopeLoadoutCategory
 
     private static void StampRow(CM_LobbyScrollItem card, string title, bool selected, Color? tint)
     {
+        StampRow(card, title, selected, tint, null);
+    }
+
+    private static void StampRow(CM_LobbyScrollItem card, string title, bool selected, Color? tint, string detail)
+    {
         KeepTextOpaque(card);
         TextMeshPro label = card.m_subTitleText != null ? card.m_subTitleText : card.m_nameText;
+        bool twoLines = !string.IsNullOrEmpty(detail);
         if (label != null)
         {
             label.gameObject.SetActive(true);
             label.enabled = true;
             label.richText = false;
             label.enableWordWrapping = false;
-            label.overflowMode = TextOverflowModes.Ellipsis;
+            label.overflowMode = twoLines ? TextOverflowModes.Overflow : TextOverflowModes.Ellipsis;
             label.alignment = TextAlignmentOptions.MidlineLeft;
-            label.text = selected ? title + "    SELECTED" : title;
+            string heading = selected ? title + "    SELECTED" : title;
+            label.text = twoLines ? heading + "\n" + detail : heading;
             label.color = tint ?? (selected ? SelectedColor : Color.white);
             label.alpha = 1f;
+            if (twoLines)
+            {
+                FitTwoLines(label);
+            }
+
             label.ForceMeshUpdate();
         }
 
         HideExtraText(card.m_nameText, label);
         HideExtraText(card.m_descText, label);
+    }
+
+    private static void FitTwoLines(TextMeshPro label)
+    {
+        RectTransform rect = label.rectTransform;
+        if (rect == null)
+        {
+            return;
+        }
+
+        float line = label.fontSize > 1f ? label.fontSize : 20f;
+        float needed = line * 2.4f;
+        if (rect.rect.height >= needed)
+        {
+            return;
+        }
+
+        float grow = needed - rect.rect.height;
+        rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, needed);
+        Vector2 anchored = rect.anchoredPosition;
+        anchored.y += grow * 0.5f;
+        rect.anchoredPosition = anchored;
     }
 
     private static void KeepTextOpaque(CM_LobbyScrollItem card)
@@ -938,6 +976,11 @@ internal static class ScopeLoadoutCategory
 
     private static void FitCardHitbox(CM_LobbyScrollItem card)
     {
+        FitCardHitbox(card, 48f);
+    }
+
+    private static void FitCardHitbox(CM_LobbyScrollItem card, float minHeight)
+    {
         RectTransform rect = card.GetComponent<RectTransform>();
         if (rect == null)
         {
@@ -947,7 +990,7 @@ internal static class ScopeLoadoutCategory
         Vector2 size = card.GetSize();
         Rect local = rect.rect;
         float width = Mathf.Max(size.x, Mathf.Abs(local.width));
-        float height = Mathf.Max(size.y, Mathf.Abs(local.height));
+        float height = Mathf.Max(size.y, Mathf.Abs(local.height), minHeight);
         if (width < 8f)
         {
             width = 640f;
@@ -955,7 +998,7 @@ internal static class ScopeLoadoutCategory
 
         if (height < 8f)
         {
-            height = 48f;
+            height = minHeight;
         }
 
         AlignCollider(card, rect, width, height);

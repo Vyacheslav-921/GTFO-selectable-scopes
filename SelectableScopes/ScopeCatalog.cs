@@ -25,6 +25,8 @@ internal static class ScopeCatalog
 
     private static readonly Dictionary<string, AuthoredSight> AuthoredSights = new Dictionary<string, AuthoredSight>(StringComparer.Ordinal);
 
+    private static readonly Dictionary<uint, List<string>> SightUsers = new Dictionary<uint, List<string>>();
+
     private static readonly Dictionary<string, AlignmentDefault> AlignmentDefaults = new Dictionary<string, AlignmentDefault>(StringComparer.Ordinal);
 
     // Every sight on these weapons starts here until that sight is saved. Vertical stays 0 when it is omitted.
@@ -137,6 +139,7 @@ internal static class ScopeCatalog
         AcceptableValueList<string> acceptable = new AcceptableValueList<string>(SightNames);
         ScopeChoices.Bind(acceptable);
         Weapons = new Dictionary<uint, ConfigEntry<string>>();
+        SightUsers.Clear();
         HashSet<string> usedSections = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "General", "Lobby", "Alignment" };
         Dictionary<string, string> existing = ReadExistingSights();
         int configured = 0;
@@ -171,6 +174,11 @@ internal static class ScopeCatalog
             Weapons.Add(block.persistentID, entry);
             IndexWeapon(block, display);
             configured++;
+        }
+
+        foreach (List<string> users in SightUsers.Values)
+        {
+            users.Sort(StringComparer.OrdinalIgnoreCase);
         }
 
         ScopeAlignment.Bind(SightNames);
@@ -306,6 +314,12 @@ internal static class ScopeCatalog
                     SightId = hadSight ? (uint)sightValue : 0u
                 });
             }
+        }
+
+        string sightTitle = string.IsNullOrWhiteSpace(display) ? block.name : display;
+        if (GearJsonEditor.TryGetComponentValue(block.GearJSON, GearJsonEditor.SightComponentId, out long stockSight))
+        {
+            RememberSightUser(stockSight, sightTitle);
         }
 
         RememberAlignmentDefault(weaponKey, block.name, display);
@@ -572,7 +586,7 @@ internal static class ScopeCatalog
         if (!string.IsNullOrWhiteSpace(publicName))
         {
             string localized = Localize(publicName.Trim());
-            if (!string.IsNullOrWhiteSpace(localized))
+            if (HasLetter(localized))
             {
                 return localized.IndexOf('_') >= 0 && localized.IndexOf(' ') < 0 ? Prettify(localized) : localized;
             }
@@ -580,6 +594,34 @@ internal static class ScopeCatalog
 
         string source = block != null && !string.IsNullOrWhiteSpace(block.name) ? block.name : fallback;
         return Prettify(source);
+    }
+
+    internal static string MenuLabel(string sightName)
+    {
+        string title = Title(sightName);
+        if (IsDefault(sightName))
+        {
+            return title;
+        }
+
+        string brief = BriefUsers(sightName);
+        return brief == null ? title : title + " — " + brief;
+    }
+
+    internal static string Detail(string sightName)
+    {
+        if (IsDefault(sightName))
+        {
+            return "Keeps the sight on the weapon";
+        }
+
+        GearSightPartProperties properties = Find(sightName)?.SightProperties;
+        if (properties == null || properties.WorldFovZoom <= 0)
+        {
+            return "No zoom";
+        }
+
+        return "FOV " + properties.WorldFovZoom.ToString(CultureInfo.InvariantCulture);
     }
 
     internal static string Describe(string sightName, InventorySlot slot, bool selected)
@@ -607,33 +649,129 @@ internal static class ScopeCatalog
 
     private static void AppendStats(StringBuilder builder, string sightName)
     {
+        AppendUsers(builder, sightName);
         GearSightPartDataBlock block = Find(sightName);
         GearSightPartProperties properties = block?.SightProperties;
-        if (properties != null)
+        if (properties == null || properties.WorldFovZoom <= 0)
         {
-            if (properties.GearFovZoom > 0)
-            {
-                builder.Append("Aim field of view: ").Append(properties.GearFovZoom).Append('\n');
-            }
+            builder.Append("Does not zoom.").Append('\n');
+        }
+        else
+        {
+            builder.Append("FOV ").Append(properties.WorldFovZoom.ToString(CultureInfo.InvariantCulture)).Append(". A lower number magnifies more.").Append('\n');
+        }
 
-            if (properties.WorldFovZoom > 0)
-            {
-                builder.Append("World field of view: ").Append(properties.WorldFovZoom).Append('\n');
-            }
-
-            if (properties.ZoomSensitivityModifier > 0f)
-            {
-                int percent = (int)Math.Round(properties.ZoomSensitivityModifier * 100f);
-                builder.Append("Aim sensitivity: ").Append(percent.ToString(CultureInfo.InvariantCulture)).Append("%\n");
-            }
+        if (properties != null && properties.GearFovZoom > 0)
+        {
+            builder.Append("Sight model framing: FOV ").Append(properties.GearFovZoom.ToString(CultureInfo.InvariantCulture)).Append('\n');
         }
 
         string dataName = block != null && !string.IsNullOrWhiteSpace(block.name) ? block.name : sightName;
-        string title = Title(sightName);
-        if (!string.Equals(title, dataName, StringComparison.Ordinal) && !string.Equals(title, Prettify(dataName), StringComparison.Ordinal))
+        builder.Append("Datablock: ").Append(dataName).Append('\n');
+    }
+
+    private static void AppendUsers(StringBuilder builder, string sightName)
+    {
+        List<string> names = UsersOf(sightName);
+        if (names == null)
         {
-            builder.Append("Data name: ").Append(dataName).Append('\n');
+            builder.Append("Not the stock sight on any weapon.").Append('\n');
+            return;
         }
+
+        builder.Append("Stock sight on: ");
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(", ");
+            }
+
+            builder.Append(names[i]);
+        }
+
+        builder.Append('\n');
+    }
+
+    private static string BriefUsers(string sightName)
+    {
+        List<string> names = UsersOf(sightName);
+        if (names == null)
+        {
+            return null;
+        }
+
+        if (names.Count == 1)
+        {
+            return names[0];
+        }
+
+        string text = names[0] + ", " + names[1];
+        int extra = names.Count - 2;
+        if (extra > 0)
+        {
+            text = text + " +" + extra.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return text;
+    }
+
+    private static List<string> UsersOf(string sightName)
+    {
+        if (Sights == null || string.IsNullOrEmpty(sightName) || !Sights.TryGetValue(sightName, out uint sightId))
+        {
+            return null;
+        }
+
+        if (!SightUsers.TryGetValue(sightId, out List<string> names) || names.Count == 0)
+        {
+            return null;
+        }
+
+        return names;
+    }
+
+    private static void RememberSightUser(long sightValue, string display)
+    {
+        if (sightValue <= 0 || sightValue > uint.MaxValue || string.IsNullOrWhiteSpace(display))
+        {
+            return;
+        }
+
+        uint sightId = (uint)sightValue;
+        if (!SightUsers.TryGetValue(sightId, out List<string> names))
+        {
+            names = new List<string>();
+            SightUsers.Add(sightId, names);
+        }
+
+        for (int i = 0; i < names.Count; i++)
+        {
+            if (string.Equals(names[i], display, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        names.Add(display);
+    }
+
+    private static bool HasLetter(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        foreach (char character in value)
+        {
+            if (char.IsLetter(character))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsDefault(string sightName)
@@ -693,7 +831,11 @@ internal static class ScopeCatalog
 
         if (text.StartsWith("Sight ", StringComparison.OrdinalIgnoreCase))
         {
-            text = text.Substring("Sight ".Length);
+            string rest = text.Substring("Sight ".Length).Trim();
+            if (rest.Length > 0 && char.IsLetter(rest[0]))
+            {
+                text = rest;
+            }
         }
 
         return text.Length == 0 ? name : text;
