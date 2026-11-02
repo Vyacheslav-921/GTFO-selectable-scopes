@@ -42,23 +42,23 @@ internal static class ScopeCatalog
         { "PistolSemi", new AlignmentDefault { Vertical = -0.035f, Forward = -0.07f } }, // Shelling S49
         { "PistolBurst", new AlignmentDefault { Vertical = -0.02f, Forward = -0.072f } }, // Shelling Nano
         { "PistolAuto", new AlignmentDefault { Vertical = 0.005f, Forward = 0.048f } }, // Raptus Treffen 2
-        { "Autopistol staggering", new AlignmentDefault { Vertical = 0f, Forward = -0.045f } }, // Raptus Steigro, HEL autopistol
+        { "Autopistol staggering", new AlignmentDefault { Vertical = 0.005f, Forward = 0.02f } }, // Raptus Steigro, HEL autopistol
         { "RevolverHEL", new AlignmentDefault { Vertical = -0.05f, Forward = 0.065f } }, // ?
         { "RevolverSemi", new AlignmentDefault { Vertical = -0.05f, Forward = 0.16f } }, // Mastaba R66
         { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
-        { "BullpupAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.02f } }, // Accrat Golok DA
-        { "ShotgunAuto", new AlignmentDefault { Vertical = 0f, Forward = -0.01f } }, // Buckland AF6
-        { "SMGAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.111f } }, // Van Auken LTC5
-        { "PDWAuto", new AlignmentDefault { Vertical = -0.02f, Forward = -0.12f } }, // Accrat STB
+        { "BullpupAuto", new AlignmentDefault { Vertical = 0.05f, Forward = -0.02f } }, // Accrat Golok DA
+        { "ShotgunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Buckland AF6
+        { "SMGAuto", new AlignmentDefault { Vertical = 0.015f, Forward = 0.111f } }, // Van Auken LTC5
+        { "PDWAuto", new AlignmentDefault { Vertical = -0.015f, Forward = -0.135f } }, // Accrat STB
         { "ShotgunRanged", new AlignmentDefault { Vertical = 0.02f, Forward = 0.115f } }, // Buckland XDist2
         { "SMGHeavyAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.111f } }, // Accrat ND6
         { "SMGBurst", new AlignmentDefault { Vertical = 0f, Forward = -0.07f } }, // Van Auken CAB F4
         { "HELGun", new AlignmentDefault { Vertical = 0f, Forward = -0.1f } }, // Omneco EXP1
-        { "DMRSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // TR22 Hanaway
+        { "DMRSemi", new AlignmentDefault { Vertical = 0f, Forward = 0f } }, // TR22 Hanaway
         { "DMRBurst", new AlignmentDefault { Vertical = 0f, Forward = -0.05f } }, // Hanaway PSB
         { "HELRifleSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.1f } }, // Omneco LRG
-        { "MachinegunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Techman Veruta XII
-        { "ShotgunShort", new AlignmentDefault { Vertical = 0f, Forward = 0.035f } } // Buckland SBS III
+        { "MachinegunAuto", new AlignmentDefault { Vertical = 0.015f, Forward = 0.17f } }, // Techman Veruta XII
+        { "ShotgunShort", new AlignmentDefault { Vertical = 0.005f, Forward = 0.035f } } // Buckland SBS III
     };
 
     private static readonly HashSet<string> HiddenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
