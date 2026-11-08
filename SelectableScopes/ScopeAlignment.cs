@@ -194,13 +194,13 @@ internal static class ScopeAlignment
     internal static string Summary(InventorySlot slot, string sightName, bool selected)
     {
         string slotName = SlotName(slot);
-        if (IsDefault(sightName))
-        {
-            return "Pick a sight to align it on the equipped " + slotName.ToLowerInvariant() + " weapon. Each weapon keeps its own alignment.";
-        }
-
         if (!TryValues(slot, sightName, out float scope, out float forward, out string weaponTitle, out bool pending))
         {
+            if (IsDefault(sightName))
+            {
+                return "Pick a sight to align it on the equipped " + slotName.ToLowerInvariant() + " weapon. Each weapon keeps its own alignment.";
+            }
+
             return "Equip a " + slotName.ToLowerInvariant() + " weapon, then use the rows at the top. Each click moves the sight " + Step.ToString("0.000", CultureInfo.InvariantCulture) + " m.";
         }
 
@@ -1215,13 +1215,33 @@ internal static class ScopeAlignment
     {
         key = default;
         weaponTitle = null;
-        if (!TryEquipped(slot, out string weaponKey, out weaponTitle, out _) || !Stems.ContainsKey(sightName))
+        if (!TryEquipped(slot, out string weaponKey, out weaponTitle, out GearIDRange range))
+        {
+            return false;
+        }
+
+        if (IsDefault(sightName))
+        {
+            sightName = EquippedSight(range);
+        }
+
+        if (sightName == null || !Stems.ContainsKey(sightName))
         {
             return false;
         }
 
         key = (slot, weaponKey, sightName);
         return true;
+    }
+
+    private static string EquippedSight(GearIDRange range)
+    {
+        if (range == null || !NamesById.TryGetValue(range.GetCompID(eGearComponent.SightPart), out string sightName))
+        {
+            return null;
+        }
+
+        return sightName;
     }
 
     private static bool TryValues(InventorySlot slot, string sightName, out float scope, out float forward, out string weaponTitle, out bool pending)
