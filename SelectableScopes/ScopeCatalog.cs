@@ -48,7 +48,7 @@ internal static class ScopeCatalog
         { "RevolverHEL", new AlignmentDefault { Vertical = -0.05f, Forward = 0.065f } }, // ?
         { "RevolverSemi", new AlignmentDefault { Vertical = -0.05f, Forward = 0.16f } }, // Mastaba R66
         { "ShotgunSemi", new AlignmentDefault { Vertical = 0f, Forward = -0.06f } }, // Buckland s870
-        { "BullpupAuto", new AlignmentDefault { Vertical = 0.05f, Forward = -0.02f } }, // Accrat Golok DA
+        { "BullpupAuto", new AlignmentDefault { Vertical = 0.015f, Forward = 0f } }, // Accrat Golok DA
         { "ShotgunAuto", new AlignmentDefault { Vertical = 0.02f, Forward = 0.17f } }, // Buckland AF6
         { "SMGAuto", new AlignmentDefault { Vertical = 0.015f, Forward = 0.111f } }, // Van Auken LTC5
         { "PDWAuto", new AlignmentDefault { Vertical = -0.015f, Forward = -0.135f } }, // Accrat STB
